@@ -1,0 +1,918 @@
+-- Extensiones
+create extension if not exists pgcrypto;
+
+-- Sorteos
+create table if not exists public.sorteos (
+  id uuid primary key default gen_random_uuid(),
+  created_by uuid references auth.users(id) on delete set null,
+  titulo text not null,
+  descripcion text,
+  precio_ticket numeric(12,2) not null default 0,
+  total_tickets int not null check (total_tickets > 0),
+  fecha_sorteo timestamptz,
+  estado text not null default 'draft' check (estado in ('draft','active','closed','archived')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_sorteos_estado on public.sorteos(estado);
+
+-- Premios (múltiples por sorteo)
+create table if not exists public.premios (
+  id uuid primary key default gen_random_uuid(),
+  sorteo_id uuid not null references public.sorteos(id) on delete cascade,
+  posicion int not null default 1, -- 1 = primer premio, etc.
+  titulo text not null,
+  descripcion text,
+  imagen_url text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_premios_sorteo on public.premios(sorteo_id);
+
+-- Boletos (pre-generados 1..total_tickets por sorteo)
+create table if not exists public.boletos (
+  id uuid primary key default gen_random_uuid(),
+  sorteo_id uuid not null references public.sorteos(id) on delete cascade,
+  numero int not null,
+  estado text not null default 'available' check (estado in ('available','reserved','sold','cancelled')),
+  reserved_until timestamptz,
+  order_id uuid, -- fk lógica a ordenes, puede ser null
+  sold_at timestamptz,
+
+  -- snapshot para impresión
+  buyer_nombre text,
+  buyer_cedula text,
+  buyer_telefono text,
+  sorteo_titulo_snapshot text,
+  precio_snapshot numeric(12,2),
+
+  created_at timestamptz not null default now()
+);
+
+alter table public.boletos
+  add constraint u_boletos_sorteo_numero unique (sorteo_id, numero);
+
+create index if not exists idx_boletos_sorteo_estado on public.boletos(sorteo_id, estado);
+create index if not exists idx_boletos_reserva on public.boletos(reserved_until);
+
+-- Órdenes (grupo de boletos reservados/confirmados)
+create table if not exists public.ordenes (
+  id uuid primary key default gen_random_uuid(),
+  sorteo_id uuid not null references public.sorteos(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending','confirmed','cancelled','expired')),
+  buyer_nombre text not null,
+  buyer_cedula text not null,
+  buyer_telefono text not null,
+  hold_minutes int not null default 10,
+  amount_total numeric(12,2) default 0,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  confirmed_at timestamptz
+);
+
+create index if not exists idx_ordenes_sorteo_status on public.ordenes(sorteo_id, status);
+
+create table if not exists public.orden_items (
+  order_id uuid not null references public.ordenes(id) on delete cascade,
+  boleto_id uuid not null references public.boletos(id) on delete cascade,
+  precio numeric(12,2) not null default 0,
+  primary key (order_id, boleto_id)
+);
+
+-- RLS
+alter table public.sorteos enable row level security;
+alter table public.premios enable row level security;
+alter table public.boletos enable row level security;
+alter table public.ordenes enable row level security;
+alter table public.orden_items enable row level security;
+
+-- Políticas mínimas (lectura para autenticados, escrituras vía RPC)
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='sorteos' and policyname='sorteos_select_auth') then
+    create policy "sorteos_select_auth" on public.sorteos
+      for select using (auth.role() = 'authenticated');
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='premios' and policyname='premios_select_auth') then
+    create policy "premios_select_auth" on public.premios
+      for select using (auth.role() = 'authenticated');
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='boletos' and policyname='boletos_select_auth') then
+    create policy "boletos_select_auth" on public.boletos
+      for select using (auth.role() = 'authenticated');
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='ordenes' and policyname='ordenes_select_owner') then
+    create policy "ordenes_select_owner" on public.ordenes
+      for select using (auth.role() = 'authenticated');
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='orden_items' and policyname='orden_items_select_owner') then
+    create policy "orden_items_select_owner" on public.orden_items
+      for select using (auth.role() = 'authenticated');
+  end if;
+end $$;
+
+-- No permitir DML directo desde el cliente (lo haremos por RPC con SECURITY DEFINER)
+revoke insert, update, delete on public.sorteos  from anon, authenticated;
+revoke insert, update, delete on public.premios  from anon, authenticated;
+revoke insert, update, delete on public.boletos  from anon, authenticated;
+revoke insert, update, delete on public.ordenes  from anon, authenticated;
+revoke insert, update, delete on public.orden_items from anon, authenticated;
+
+-- Disparador updated_at en sorteos
+create or replace function public.set_updated_at() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end $$;
+
+drop trigger if exists trg_sorteos_updated_at on public.sorteos;
+create trigger trg_sorteos_updated_at
+before update on public.sorteos
+for each row execute procedure public.set_updated_at();
+
+-- Generar boletos 1..total_tickets para un sorteo
+create or replace function public.generate_boletos(p_sorteo_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_total int;
+begin
+  select total_tickets into v_total from public.sorteos where id = p_sorteo_id;
+  if v_total is null then
+    raise exception 'Sorteo % no existe', p_sorteo_id;
+  end if;
+
+  insert into public.boletos (sorteo_id, numero)
+  select p_sorteo_id, g.n
+  from generate_series(1, v_total) as g(n)
+  on conflict (sorteo_id, numero) do nothing;
+end;
+$$;
+
+grant execute on function public.generate_boletos(uuid) to authenticated;
+
+-- Crear sorteo + generar boletos
+create or replace function public.create_raffle(
+  p_titulo text,
+  p_descripcion text,
+  p_precio numeric,
+  p_total_tickets int,
+  p_fecha_sorteo timestamptz
+) returns public.sorteos
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sorteo public.sorteos;
+begin
+  insert into public.sorteos (titulo, descripcion, precio_ticket, total_tickets, fecha_sorteo, estado, created_by)
+  values (p_titulo, p_descripcion, p_precio, p_total_tickets, p_fecha_sorteo, 'active', auth.uid())
+  returning * into v_sorteo;
+
+  perform public.generate_boletos(v_sorteo.id);
+  return v_sorteo;
+end;
+$$;
+
+grant execute on function public.create_raffle(text, text, numeric, int, timestamptz) to authenticated;
+
+-- Reservar números (hold) y crear orden + items
+create or replace function public.reserve_tickets(
+  p_sorteo_id uuid,
+  p_numbers int[],
+  p_buyer_nombre text,
+  p_buyer_cedula text,
+  p_buyer_telefono text,
+  p_hold_minutes int default 10
+) returns table(order_id uuid, boleto_id uuid, numero int)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_order_id uuid := gen_random_uuid();
+  v_precio numeric;
+  v_locked int;
+begin
+  if array_length(p_numbers,1) is null then
+    raise exception 'Debe enviar al menos un número';
+  end if;
+
+  select precio_ticket into v_precio from public.sorteos where id = p_sorteo_id;
+  if v_precio is null then
+    raise exception 'Sorteo no encontrado';
+  end if;
+
+  -- Crear orden en pending
+  insert into public.ordenes (id, sorteo_id, status, buyer_nombre, buyer_cedula, buyer_telefono, hold_minutes, amount_total, created_by)
+  values (v_order_id, p_sorteo_id, 'pending', p_buyer_nombre, p_buyer_cedula, p_buyer_telefono, p_hold_minutes, v_precio * coalesce(array_length(p_numbers,1),0), auth.uid());
+
+  -- Tomar boletos disponibles o cuyas reservas expiraron
+  with candidatos as (
+    select b.id, b.numero
+    from public.boletos b
+    where b.sorteo_id = p_sorteo_id
+      and b.numero = any(p_numbers)
+      and (
+        b.estado = 'available'
+        or (b.estado = 'reserved' and coalesce(b.reserved_until, to_timestamp(0)) < now())
+      )
+    for update
+  ),
+  reservados as (
+    update public.boletos b
+    set estado = 'reserved',
+        reserved_until = now() + make_interval(mins => p_hold_minutes),
+        order_id = v_order_id
+    from candidatos c
+    where b.id = c.id
+    returning b.id, b.numero
+  )
+  insert into public.orden_items (order_id, boleto_id, precio)
+  select v_order_id, r.id, v_precio from reservados r;
+
+  get diagnostics v_locked = row_count;
+  if v_locked <> array_length(p_numbers,1) then
+    -- No se pudieron reservar todos -> revertir
+    delete from public.orden_items where order_id = v_order_id;
+    delete from public.ordenes where id = v_order_id;
+    raise exception 'Algunos números ya no están disponibles';
+  end if;
+
+  return query
+    select v_order_id, r.id, r.numero
+    from public.boletos r
+    where r.order_id = v_order_id and r.estado = 'reserved';
+end;
+$$;
+
+grant execute on function public.reserve_tickets(uuid, int[], text, text, text, int) to authenticated;
+
+-- Confirmar orden: marcar vendidos, copiar snapshot para impresión y cerrar orden
+create or replace function public.confirm_order(p_order_id uuid)
+returns table(
+  boleto_id uuid,
+  numero int,
+  sorteo_titulo text,
+  precio numeric,
+  buyer_nombre text,
+  buyer_cedula text,
+  buyer_telefono text,
+  hora_jugada timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sorteo_id uuid;
+  v_titulo text;
+  v_precio numeric;
+begin
+  select o.sorteo_id, s.titulo, s.precio_ticket
+  into v_sorteo_id, v_titulo, v_precio
+  from public.ordenes o
+  join public.sorteos s on s.id = o.sorteo_id
+  where o.id = p_order_id and o.status = 'pending';
+
+  if v_sorteo_id is null then
+    raise exception 'Orden no encontrada o ya confirmada';
+  end if;
+
+  -- Marcar boletos como vendidos, copiar snapshot de impresión
+  with vendidos as (
+    update public.boletos b
+    set estado = 'sold',
+        reserved_until = null,
+        sold_at = now(),
+        sorteo_titulo_snapshot = v_titulo,
+        precio_snapshot = v_precio,
+        buyer_nombre = (select buyer_nombre from public.ordenes where id = p_order_id),
+        buyer_cedula = (select buyer_cedula from public.ordenes where id = p_order_id),
+        buyer_telefono = (select buyer_telefono from public.ordenes where id = p_order_id)
+    where b.order_id = p_order_id
+      and b.estado = 'reserved'
+    returning b.*
+  )
+  update public.ordenes
+    set status = 'confirmed', confirmed_at = now()
+  where id = p_order_id and status = 'pending';
+
+  return query
+    select b.id, b.numero, b.sorteo_titulo_snapshot, b.precio_snapshot,
+           b.buyer_nombre, b.buyer_cedula, b.buyer_telefono, b.sold_at
+    from public.boletos b
+    where b.order_id = p_order_id and b.estado = 'sold';
+end;
+$$;
+
+grant execute on function public.confirm_order(uuid) to authenticated;
+
+-- Liberar reservas vencidas (util si quieres botón o cron)
+create or replace function public.release_expired_reservations()
+returns int
+language sql
+security definer
+set search_path = public
+as $$
+  with exp as (
+    update public.boletos
+    set estado = 'available',
+        reserved_until = null,
+        order_id = null
+    where estado = 'reserved'
+      and coalesce(reserved_until, to_timestamp(0)) < now()
+    returning 1
+  )
+  select count(*)::int from exp;
+$$;
+
+grant execute on function public.release_expired_reservations() to authenticated;
+
+
+----------------------------------------------
+
+create or replace function public.reserve_tickets(
+p_sorteo_id uuid,
+p_numbers int[],
+p_buyer_nombre text,
+p_buyer_cedula text,
+p_buyer_telefono text,
+p_hold_minutes int default 10
+) returns table(order_id uuid, boleto_id uuid, numero int)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+v_order_id uuid := gen_random_uuid();
+v_precio numeric;
+v_locked int;
+begin
+if array_length(p_numbers,1) is null then
+raise exception 'Debe enviar al menos un número';
+end if;
+
+select precio_ticket into v_precio from public.sorteos where id = p_sorteo_id;
+if v_precio is null then
+raise exception 'Sorteo no encontrado';
+end if;
+
+insert into public.ordenes (id, sorteo_id, status, buyer_nombre, buyer_cedula, buyer_telefono, hold_minutes, amount_total, created_by)
+values (v_order_id, p_sorteo_id, 'pending', p_buyer_nombre, p_buyer_cedula, p_buyer_telefono, p_hold_minutes, v_precio * coalesce(array_length(p_numbers,1),0), auth.uid());
+
+with candidatos as (
+select b.id, b.numero
+from public.boletos b
+where b.sorteo_id = p_sorteo_id
+and b.numero = any(p_numbers)
+and (
+b.estado = 'available'
+or (b.estado = 'reserved' and coalesce(b.reserved_until, to_timestamp(0)) < now())
+)
+for update
+),
+reservados as (
+update public.boletos b
+set estado = 'reserved',
+reserved_until = now() + make_interval(mins => p_hold_minutes),
+b.order_id = v_order_id
+from candidatos c
+where b.id = c.id
+returning b.id, b.numero
+)
+insert into public.orden_items (order_id, boleto_id, precio)
+select v_order_id, r.id, v_precio from reservados r;
+
+get diagnostics v_locked = row_count;
+if v_locked <> array_length(p_numbers,1) then
+delete from public.orden_items where order_id = v_order_id;
+delete from public.ordenes where id = v_order_id;
+raise exception 'Algunos números ya no están disponibles';
+end if;
+
+return query
+select v_order_id, r.id, r.numero
+from public.boletos r
+where r.order_id = v_order_id and r.estado = 'reserved';
+end;
+$$;
+
+
+----------------10/18/2025 --------------------- correcciones------------
+
+create or replace function public.reserve_tickets(
+  p_sorteo_id uuid,
+  p_numbers int[],
+  p_buyer_nombre text,
+  p_buyer_cedula text,
+  p_buyer_telefono text,
+  p_hold_minutes int default 10
+) returns table(order_id uuid, boleto_id uuid, numero int)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_order_id uuid := gen_random_uuid();
+  v_precio numeric;
+  v_locked int;
+begin
+  if array_length(p_numbers,1) is null then
+    raise exception 'Debe enviar al menos un número';
+  end if;
+
+  select precio_ticket into v_precio from public.sorteos where id = p_sorteo_id;
+  if v_precio is null then
+    raise exception 'Sorteo no encontrado';
+  end if;
+
+  insert into public.ordenes (id, sorteo_id, status, buyer_nombre, buyer_cedula, buyer_telefono, hold_minutes, amount_total, created_by)
+  values (v_order_id, p_sorteo_id, 'pending', p_buyer_nombre, p_buyer_cedula, p_buyer_telefono, p_hold_minutes, v_precio * coalesce(array_length(p_numbers,1),0), auth.uid());
+
+  with candidatos as (
+    select b.id, b.numero
+    from public.boletos b
+    where b.sorteo_id = p_sorteo_id
+      and b.numero = any(p_numbers)
+      and (
+        b.estado = 'available'
+        or (b.estado = 'reserved' and coalesce(b.reserved_until, to_timestamp(0)) < now())
+      )
+    for update
+  ),
+  reservados as (
+    update public.boletos b
+    set estado = 'reserved',
+        reserved_until = now() + make_interval(mins => p_hold_minutes),
+        order_id = v_order_id  -- Removí "b." de aquí
+    from candidatos c
+    where b.id = c.id
+    returning b.id, b.numero
+  )
+  insert into public.orden_items (order_id, boleto_id, precio)
+  select v_order_id, r.id, v_precio from reservados r;
+
+  get diagnostics v_locked = row_count;
+  if v_locked <> array_length(p_numbers,1) then
+    delete from public.orden_items where order_id = v_order_id;
+    delete from public.ordenes where id = v_order_id;
+    raise exception 'Algunos números ya no están disponibles';
+  end if;
+
+  return query
+    select v_order_id, r.id, r.numero
+    from public.boletos r
+    where r.order_id = v_order_id and r.estado = 'reserved';
+end;
+$$;
+
+
+---------------ajuste en nombre---------------------
+
+create or replace function public.confirm_order(p_order_id uuid)
+returns table(
+  boleto_id uuid,
+  numero int,
+  sorteo_titulo text,
+  precio numeric,
+  buyer_nombre text,
+  buyer_cedula text,
+  buyer_telefono text,
+  hora_jugada timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sorteo_id uuid;
+  v_titulo text;
+  v_precio numeric;
+  v_buyer_nombre text;
+  v_buyer_cedula text;
+  v_buyer_telefono text;
+begin
+  select o.sorteo_id, s.titulo, s.precio_ticket, o.buyer_nombre, o.buyer_cedula, o.buyer_telefono
+  into v_sorteo_id, v_titulo, v_precio, v_buyer_nombre, v_buyer_cedula, v_buyer_telefono
+  from public.ordenes o
+  join public.sorteos s on s.id = o.sorteo_id
+  where o.id = p_order_id and o.status = 'pending';
+
+  if v_sorteo_id is null then
+    raise exception 'Orden no encontrada o ya confirmada';
+  end if;
+
+  -- Marcar boletos como vendidos, copiar snapshot de impresión
+  with vendidos as (
+    update public.boletos b
+    set estado = 'sold',
+        reserved_until = null,
+        sold_at = now(),
+        sorteo_titulo_snapshot = v_titulo,
+        precio_snapshot = v_precio,
+        buyer_nombre = v_buyer_nombre,
+        buyer_cedula = v_buyer_cedula,
+        buyer_telefono = v_buyer_telefono
+    where b.order_id = p_order_id
+      and b.estado = 'reserved'
+    returning b.*
+  )
+  update public.ordenes
+    set status = 'confirmed', confirmed_at = now()
+  where id = p_order_id and status = 'pending';
+
+  return query
+    select b.id, b.numero, b.sorteo_titulo_snapshot, b.precio_snapshot,
+           b.buyer_nombre, b.buyer_cedula, b.buyer_telefono, b.sold_at
+    from public.boletos b
+    where b.order_id = p_order_id and b.estado = 'sold';
+end;
+$$;
+
+---------------------------------------------
+
+create or replace function public.create_raffle(
+  p_titulo text,
+  p_descripcion text,
+  p_precio numeric,
+  p_total_tickets int,
+  p_fecha_sorteo timestamptz,
+  p_premios text[] default array[]::text[]
+) returns public.sorteos
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sorteo public.sorteos;
+begin
+  insert into public.sorteos (titulo, descripcion, precio_ticket, total_tickets, fecha_sorteo, estado, created_by)
+  values (p_titulo, p_descripcion, p_precio, p_total_tickets, p_fecha_sorteo, 'active', auth.uid())
+  returning * into v_sorteo;
+
+  -- insertar premios si fueron provistos
+  insert into public.premios (sorteo_id, posicion, titulo)
+  select v_sorteo.id, ord::int, val
+  from unnest(coalesce(p_premios, array[]::text[])) with ordinality as t(val, ord)
+  where nullif(trim(val), '') is not null;
+
+  -- generar boletos
+  perform public.generate_boletos(v_sorteo.id);
+
+  return v_sorteo;
+end;
+$$;
+
+grant execute on function public.create_raffle(text, text, numeric, int, timestamptz, text[]) to authenticated;
+
+--------------------------------------
+
+-- 1) Asegura eliminar la firma antigua
+drop function if exists public.confirm_order(uuid);
+
+-- 2) Crear confirm_order que vende únicamente si TODO sigue available
+create or replace function public.confirm_order(
+  p_order_id uuid
+) returns table(
+  boleto_id uuid,
+  numero int,
+  sorteo_titulo text,
+  precio numeric,
+  buyer_nombre text,
+  buyer_cedula text,
+  buyer_telefono text,
+  sold_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sorteo_id uuid;
+  v_titulo text;
+  v_precio numeric;
+  v_buyer_nombre text;
+  v_buyer_cedula text;
+  v_buyer_telefono text;
+  v_item_count int;
+  v_sold_count int;
+begin
+  -- Traer snapshot de la orden PENDING
+  select o.sorteo_id, s.titulo, s.precio_ticket, o.buyer_nombre, o.buyer_cedula, o.buyer_telefono
+    into v_sorteo_id, v_titulo, v_precio, v_buyer_nombre, v_buyer_cedula, v_buyer_telefono
+  from public.ordenes o
+  join public.sorteos s on s.id = o.sorteo_id
+  where o.id = p_order_id and o.status = 'pending';
+
+  if v_sorteo_id is null then
+    raise exception 'Orden no encontrada o no está en estado pending';
+  end if;
+
+  -- Cuántos items tiene la orden
+  select count(*) into v_item_count
+  from public.orden_items
+  where order_id = p_order_id;
+
+  if v_item_count = 0 then
+    raise exception 'La orden no tiene ítems';
+  end if;
+
+  -- Vender SOLO si los boletos de la orden están available (se bloquean con FOR UPDATE)
+  with objetivos as (
+    select oi.boleto_id
+    from public.orden_items oi
+    where oi.order_id = p_order_id
+  ),
+  vendibles as (
+    select b.id
+    from public.boletos b
+    join objetivos o on o.boleto_id = b.id
+    where b.sorteo_id = v_sorteo_id
+      and b.estado = 'available'
+    for update
+  )
+  update public.boletos b
+  set estado = 'sold',
+      reserved_until = null,
+      sold_at = now(),
+      sorteo_titulo_snapshot = v_titulo,
+      precio_snapshot = v_precio,
+      buyer_nombre = v_buyer_nombre,
+      buyer_cedula = v_buyer_cedula,
+      buyer_telefono = v_buyer_telefono,
+      order_id = p_order_id
+  where b.id in (select id from vendibles);
+
+  get diagnostics v_sold_count = row_count;
+
+  -- Si no se pudieron vender TODOS, error -> rollback total
+  if v_sold_count <> v_item_count then
+    raise exception 'Algunos números ya no están disponibles';
+  end if;
+
+  -- Confirmar la orden
+  update public.ordenes
+    set status = 'confirmed', confirmed_at = now()
+  where id = p_order_id and status = 'pending';
+
+  -- Retornar los boletos vendidos
+  return query
+    select b.id, b.numero, b.sorteo_titulo_snapshot, b.precio_snapshot,
+           b.buyer_nombre, b.buyer_cedula, b.buyer_telefono, b.sold_at
+    from public.boletos b
+    where b.order_id = p_order_id and b.estado = 'sold';
+end;
+$$;
+
+-- 3) Permisos (ajusta a tus roles reales)
+grant execute on function public.confirm_order(uuid) to authenticated;
+-- si llamas desde edge functions / service key:
+grant execute on function public.confirm_order(uuid) to service_role;
+-- si necesitas llamar como público:
+-- grant execute on function public.confirm_order(uuid) to anon;
+
+-- 4) Refrescar el esquema de PostgREST (Supabase)
+notify pgrst, 'reload schema';
+
+
+-------------------------------------------
+
+create or replace function public.update_raffle_basic(
+  p_id uuid,
+  p_titulo text default null,
+  p_total_tickets int default null
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Autorizar solo a administradores (user_metadata.role = 'admin')
+  if coalesce((auth.jwt()->'user_metadata'->>'role'),'') <> 'admin' then
+    raise exception 'forbidden' using errcode = '42501';
+  end if;
+
+  if p_titulo is not null then
+    update public.sorteos set titulo = p_titulo where id = p_id;
+  end if;
+
+  if p_total_tickets is not null then
+    update public.sorteos set total_tickets = p_total_tickets where id = p_id;
+    -- Genera boletos faltantes si se aumentó el total (no elimina sobrantes)
+    perform public.generate_boletos(p_id);
+  end if;
+end;
+$$;
+
+grant execute on function public.update_raffle_basic(uuid, text, int) to authenticated;
+
+----------------------------------------------
+
+create or replace function public.void_ticket(p_boleto_id uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_boleto public.boletos;
+  v_order_id uuid;
+  v_result json;
+begin
+  select * into v_boleto
+  from public.boletos
+  where id = p_boleto_id;
+
+  if v_boleto.id is null then
+    raise exception 'Boleto no encontrado';
+  end if;
+
+  if v_boleto.estado not in ('sold', 'reserved') then
+    raise exception 'Solo se pueden anular boletos vendidos o reservados';
+  end if;
+
+  v_order_id := v_boleto.order_id;
+
+  -- Devolver el boleto a disponible
+  update public.boletos
+  set estado = 'available',
+      order_id = null,
+      reserved_until = null,
+      sold_at = null,
+      buyer_nombre = null,
+      buyer_cedula = null,
+      buyer_telefono = null,
+      sorteo_titulo_snapshot = null,
+      precio_snapshot = null
+  where id = p_boleto_id;
+
+  -- Limpiar referencias en orden_items
+  if v_order_id is not null then
+    delete from public.orden_items where boleto_id = p_boleto_id;
+    
+    -- Si la orden se quedó sin items, cancelarla
+    if not exists (select 1 from public.orden_items where order_id = v_order_id) then
+      update public.ordenes
+      set status = 'cancelled'
+      where id = v_order_id;
+    end if;
+  end if;
+
+  v_result := json_build_object(
+    'success', true,
+    'boleto_id', p_boleto_id,
+    'numero', v_boleto.numero,
+    'estado_anterior', v_boleto.estado,
+    'estado_nuevo', 'available',
+    'message', 'Boleto anulado y devuelto a disponible'
+  );
+
+  return v_result;
+end;
+$$;
+
+grant execute on function public.void_ticket(uuid) to authenticated;
+
+
+-----------------funcion para borrar sorteos------------------------------
+
+-- Función simple para borrar sorteo
+create or replace function public.delete_raffle(p_id uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_titulo text;
+begin
+  -- Guardar título antes de borrar
+  select titulo into v_titulo from public.sorteos where id = p_id;
+  
+  if v_titulo is null then
+    raise exception 'Sorteo no encontrado';
+  end if;
+
+  -- Borrar ordenes primero
+  delete from public.ordenes where sorteo_id = p_id;
+  
+  -- Borrar sorteo (CASCADE hace el resto)
+  delete from public.sorteos where id = p_id;
+
+  return json_build_object(
+    'success', true,
+    'sorteo_id', p_id,
+    'titulo', v_titulo,
+    'message', 'Sorteo eliminado exitosamente'
+  );
+end;
+$$;
+
+grant execute on function public.delete_raffle(uuid) to authenticated;
+
+------------------------------------
+
+grant execute on function public.generate_boletos(uuid)                         to authenticated, service_role;
+grant execute on function public.create_raffle(text,text,numeric,int,timestamptz) to authenticated, service_role;
+grant execute on function public.create_raffle(text,text,numeric,int,timestamptz,text[]) to authenticated, service_role;
+grant execute on function public.reserve_tickets(uuid,int[],text,text,text,int)  to authenticated, service_role;
+grant execute on function public.confirm_order(uuid)                             to authenticated, service_role;
+grant execute on function public.release_expired_reservations()                  to authenticated, service_role;
+grant execute on function public.update_raffle_basic(uuid,text,int)              to authenticated, service_role;
+grant execute on function public.void_ticket(uuid)                               to authenticated, service_role;
+
+
+-----------------------------------
+
+create or replace function public.sell_tickets_direct(
+  p_sorteo_id uuid,
+  p_numbers int[],
+  p_buyer_nombre text,
+  p_buyer_cedula text,
+  p_buyer_telefono text
+) returns table(
+  boleto_id uuid,
+  numero int,
+  sorteo_titulo text,
+  precio numeric,
+  buyer_nombre text,
+  buyer_cedula text,
+  buyer_telefono text,
+  sold_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_titulo text;
+  v_precio numeric;
+  v_sold_count int;
+begin
+  if array_length(p_numbers,1) is null then
+    raise exception 'Debe enviar al menos un número';
+  end if;
+
+  select s.titulo, s.precio_ticket
+    into v_titulo, v_precio
+  from public.sorteos s
+  where s.id = p_sorteo_id;
+
+  if v_titulo is null then
+    raise exception 'Sorteo no encontrado';
+  end if;
+
+  with objetivos as (
+    select b.id
+    from public.boletos b
+    where b.sorteo_id = p_sorteo_id
+      and b.numero = any(p_numbers)
+  ),
+  vendibles as (
+    select b.id
+    from public.boletos b
+    join objetivos o on o.id = b.id
+    where b.estado = 'available'
+    for update
+  )
+  update public.boletos b
+  set estado = 'sold',
+      sold_at = now(),
+      reserved_until = null,
+      sorteo_titulo_snapshot = v_titulo,
+      precio_snapshot = v_precio,
+      buyer_nombre = p_buyer_nombre,
+      buyer_cedula = p_buyer_cedula,
+      buyer_telefono = p_buyer_telefono
+  where b.id in (select id from vendibles);
+
+  get diagnostics v_sold_count = row_count;
+
+  if v_sold_count <> array_length(p_numbers,1) then
+    raise exception 'Algunos tickets ya no están disponibles';
+  end if;
+
+  return query
+    select b.id, b.numero, b.sorteo_titulo_snapshot, b.precio_snapshot,
+           b.buyer_nombre, b.buyer_cedula, b.buyer_telefono, b.sold_at
+    from public.boletos b
+    where b.sorteo_id = p_sorteo_id
+      and b.numero = any(p_numbers)
+      and b.estado = 'sold'
+    order by b.numero;
+end;
+$$;
+
+grant execute on function public.sell_tickets_direct(uuid,int[],text,text,text) to authenticated, service_role;
+notify pgrst, 'reload schema';
