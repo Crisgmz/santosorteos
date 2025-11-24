@@ -194,7 +194,7 @@ create or replace function public.reserve_tickets(
   p_buyer_cedula text,
   p_buyer_telefono text,
   p_hold_minutes int default 10
-) returns table(order_id uuid, boleto_id uuid, numero int)
+) returns table(order_id uuid, boleto_id uuid, numero int, reserved_until timestamptz)
 language plpgsql
 security definer
 set search_path = public
@@ -250,9 +250,9 @@ begin
   end if;
 
   return query
-    select v_order_id, r.id, r.numero
-    from public.boletos r
-    where r.order_id = v_order_id and r.estado = 'reserved';
+    select v_order_id, b.id, b.numero, b.reserved_until
+    from public.boletos b
+    where b.order_id = v_order_id and b.estado = 'reserved';
 end;
 $$;
 

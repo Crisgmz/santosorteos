@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:santosorteosweb/MultisorteosPage.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() {
+import 'MultisorteosPage.dart';
+import 'env.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
   runApp(const MyApp());
 }
 
