@@ -1,0 +1,47 @@
+﻿Analyzing santosorteosweb...                                    
+
+   info - The file name 'MultisorteosPage.dart' isn't a lower_case_with_underscores identifier - lib\MultisorteosPage.dart:1:1 - file_names
+   info - The imported package 'url_launcher' isn't a dependency of the importing package - lib\MultisorteosPage.dart:7:8 - depend_on_referenced_packages
+   info - The imported package 'image' isn't a dependency of the importing package - lib\MultisorteosPage.dart:8:8 - depend_on_referenced_packages
+warning - The library 'package:santosorteosweb/raffle_detail_page.dart' doesn't export a member with the hidden name 'SingleChildScrollView' - lib\MultisorteosPage.dart:20:39 - undefined_hidden_name
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:282:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:285:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:418:50 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:570:33 - deprecated_member_use
+   info - Unnecessary use of multiple underscores - lib\MultisorteosPage.dart:598:37 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\MultisorteosPage.dart:598:41 - unnecessary_underscores
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:694:52 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:856:39 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:1125:35 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:1147:40 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:1175:46 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:1317:60 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:1401:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\MultisorteosPage.dart:1497:33 - deprecated_member_use
+warning - Dead code - lib\data\raffles_repository.dart:110:27 - dead_code
+warning - The left operand can't be null, so the right operand is never executed - lib\data\raffles_repository.dart:110:30 - dead_null_aware_expression
+   info - 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead - lib\raffle_detail_page.dart:3:1 - deprecated_member_use
+   info - Don't use web-only libraries outside Flutter web plugins - lib\raffle_detail_page.dart:3:1 - avoid_web_libraries_in_flutter
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:283:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:327:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:421:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:538:51 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:718:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:721:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:792:33 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:946:40 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:1087:45 - deprecated_member_use
+warning - The declaration '_pill' isn't referenced - lib\raffle_detail_page.dart:1128:10 - unused_element
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:1132:29 - deprecated_member_use
+   info - Unnecessary use of multiple underscores - lib\raffle_detail_page.dart:1177:43 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\raffle_detail_page.dart:1177:47 - unnecessary_underscores
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:1262:29 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:1264:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\raffle_detail_page.dart:1334:41 - deprecated_member_use
+   info - 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead - lib\ticket_image_saver_stub.dart:1:1 - deprecated_member_use
+   info - Don't use web-only libraries outside Flutter web plugins - lib\ticket_image_saver_stub.dart:1:1 - avoid_web_libraries_in_flutter
+warning - The value of the local variable 'anchor' isn't used - lib\ticket_image_saver_stub.dart:8:9 - unused_local_variable
+   info - 'dart:html' is deprecated and shouldn't be used. Use package:web and dart:js_interop instead - lib\ticket_image_saver_web.dart:2:1 - deprecated_member_use
+   info - Don't use web-only libraries outside Flutter web plugins - lib\ticket_image_saver_web.dart:2:1 - avoid_web_libraries_in_flutter
+warning - The value of the local variable 'anchor' isn't used - lib\ticket_image_saver_web.dart:10:9 - unused_local_variable
+

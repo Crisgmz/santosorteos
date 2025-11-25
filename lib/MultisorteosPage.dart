@@ -1,9 +1,7 @@
-﻿import 'dart:typed_data';
-import 'dart:ui' as ui;
+﻿import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:carousel_slider/carousel_slider.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,7 +9,6 @@ import 'package:image/image.dart' as img;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter/foundation.dart';
-import 'dart:html' as html;
 
 import 'ticket_image_saver_stub.dart'
     if (dart.library.html) 'ticket_image_saver_web.dart'
@@ -196,43 +193,51 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
   }
 
   Future<void> _printTicket(VerifiedTicket t) async {
-    final key = _ticketKeys[_ticketKeyId(t)];
-    if (key == null) return;
+  final key = _ticketKeys[_ticketKeyId(t)];
+  if (key == null) return;
 
-    final bytes = await _captureTicketAsJpg(key);
-    if (bytes == null) {
+  final bytes = await _captureTicketAsJpg(key);
+  if (bytes == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo generar la imagen.')),
+      );
+    }
+    return;
+  }
+
+  // WEB: usar el saver condicional en lugar de dart:html
+  if (kIsWeb) {
+    try {
+      final filename = 'ticket_${t.numero.toString().padLeft(4, '0')}.jpg';
+      await ticket_saver.saveTicketImage(bytes, filename);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo generar la imagen.')),
+          const SnackBar(content: Text('Imagen abierta en nueva pestaña')),
         );
       }
-      return;
+    } catch (e) {
+      debugPrint('Error abriendo imagen: $e');
     }
-
-    // WEB: abrir imagen en pestaña nueva
-    if (kIsWeb) {
-      final blob = html.Blob([bytes], 'image/jpeg');
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      html.window.open(url, '_blank');
-      return;
-    }
-
-    // NO WEB: plugin printing
-    await Printing.layoutPdf(
-      name: 'ticket_${t.numero.toString().padLeft(4, '0')}.pdf',
-      onLayout: (format) async {
-        final pdf = pw.Document();
-        final image = pw.MemoryImage(bytes);
-        pdf.addPage(
-          pw.Page(
-            pageFormat: format,
-            build: (context) => pw.Center(child: pw.Image(image)),
-          ),
-        );
-        return pdf.save();
-      },
-    );
+    return;
   }
+
+  // NO WEB: plugin printing
+  await Printing.layoutPdf(
+    name: 'ticket_${t.numero.toString().padLeft(4, '0')}.pdf',
+    onLayout: (format) async {
+      final pdf = pw.Document();
+      final image = pw.MemoryImage(bytes);
+      pdf.addPage(
+        pw.Page(
+          pageFormat: format,
+          build: (context) => pw.Center(child: pw.Image(image)),
+        ),
+      );
+      return pdf.save();
+    },
+  );
+}
 
   // =====================================================================
   // MAIN BUILD
@@ -274,10 +279,10 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
   Widget _buildHeader() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.96),
+        color: Colors.white.withValues(alpha: 0.96),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -410,7 +415,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       elevation: 6,
-                      shadowColor: kPrimaryColor.withOpacity(0.4),
+                      shadowColor: kPrimaryColor.withValues(alpha: 0.4),
                     ),
                     child: const Text(
                       "VER SORTEOS Y GANADORES",
@@ -562,7 +567,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -686,7 +691,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                           borderRadius: BorderRadius.circular(999),
                         ),
                         elevation: 4,
-                        shadowColor: kPrimaryColor.withOpacity(0.4),
+                        shadowColor: kPrimaryColor.withValues(alpha: 0.4),
                       ),
                       child: const Text(
                         "BOLETOS DISPONIBLES",
@@ -848,7 +853,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
               borderRadius: BorderRadius.circular(18),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
+                  color: Colors.black.withValues(alpha: 0.05),
                   blurRadius: 18,
                   offset: const Offset(0, 8),
                 ),
@@ -1117,7 +1122,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 10,
               offset: const Offset(0, 6),
             ),
@@ -1139,7 +1144,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                         image: NetworkImage(bg),
                         fit: BoxFit.cover,
                         colorFilter: ColorFilter.mode(
-                          Colors.black.withOpacity(0.55),
+                          Colors.black.withValues(alpha: 0.55),
                           BlendMode.darken,
                         ),
                       )
@@ -1167,7 +1172,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.2),
+                          color: statusColor.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
@@ -1309,7 +1314,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                             ),
                           ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: kPrimaryColor.withOpacity(0.9),
+                            backgroundColor: kPrimaryColor.withValues(alpha: 0.9),
                             padding: const EdgeInsets.symmetric(vertical: 10),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10),
@@ -1393,7 +1398,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -1489,7 +1494,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),

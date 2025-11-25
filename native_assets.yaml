@@ -1,0 +1,4 @@
+# Disable native assets for web builds
+targets:
+  web:
+    enabled: false

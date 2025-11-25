@@ -1,0 +1,27 @@
+﻿Resolving dependencies...
+Downloading packages...
+  app_links 6.4.1 (7.0.0 available)
+  characters 1.4.0 (1.4.1 available)
+  code_assets 0.19.10 (1.0.0 available)
+! flutter_lints 6.0.0 (overridden)
+  hooks 0.20.5 (1.0.0 available)
+  matcher 0.12.17 (0.12.18 available)
+  material_color_utilities 0.11.1 (0.13.0 available)
+  native_toolchain_c 0.17.2 (0.17.4 available)
+  path_provider_foundation 2.5.0 (retracted)
+  test_api 0.7.7 (0.7.8 available)
+Got dependencies!
+8 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Analyzing santosorteosweb...                                    
+
+   info - The file name 'MultisorteosPage.dart' isn't a lower_case_with_underscores identifier - lib\MultisorteosPage.dart:1:1 - file_names
+warning - The library 'package:santosorteosweb/raffle_detail_page.dart' doesn't export a member with the hidden name 'SingleChildScrollView' - lib\MultisorteosPage.dart:20:39 - undefined_hidden_name
+   info - Unnecessary use of multiple underscores - lib\MultisorteosPage.dart:598:37 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\MultisorteosPage.dart:598:41 - unnecessary_underscores
+warning - Dead code - lib\data\raffles_repository.dart:110:27 - dead_code
+warning - The left operand can't be null, so the right operand is never executed - lib\data\raffles_repository.dart:110:30 - dead_null_aware_expression
+warning - The declaration '_pill' isn't referenced - lib\raffle_detail_page.dart:1119:10 - unused_element
+   info - Unnecessary use of multiple underscores - lib\raffle_detail_page.dart:1168:43 - unnecessary_underscores
+   info - Unnecessary use of multiple underscores - lib\raffle_detail_page.dart:1168:47 - unnecessary_underscores
+

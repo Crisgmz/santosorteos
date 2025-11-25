@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'dart:html' as html;
+import 'package:file_picker/file_picker.dart';
 import 'dart:typed_data';
 
 import 'MultisorteosPage.dart';
@@ -203,27 +203,18 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
 
   Future<void> _pickImage() async {
     try {
-      final html.FileUploadInputElement uploadInput =
-          html.FileUploadInputElement();
-      uploadInput.accept = 'image/*';
-      uploadInput.click();
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
 
-      uploadInput.onChange.listen((e) {
-        final files = uploadInput.files;
-        if (files != null && files.isNotEmpty) {
-          final file = files[0];
-          final reader = html.FileReader();
-
-          reader.onLoadEnd.listen((e) {
-            setState(() {
-              _imageFileName = file.name;
-              _imageBytes = reader.result as Uint8List;
-            });
-          });
-
-          reader.readAsArrayBuffer(file);
-        }
-      });
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        setState(() {
+          _imageFileName = file.name;
+          _imageBytes = file.bytes;
+        });
+      }
     } catch (e) {
       setState(() {
         _feedback = 'Error al seleccionar imagen: $e';
@@ -280,7 +271,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                           border: Border.all(color: Colors.grey.shade200),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.04),
+                              color: Colors.black.withValues(alpha: 0.04),
                               blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
@@ -324,7 +315,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                           border: Border.all(color: Colors.grey.shade200),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.04),
+                              color: Colors.black.withValues(alpha: 0.04),
                               blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
@@ -418,7 +409,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                           border: Border.all(color: Colors.grey.shade200),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.04),
+                              color: Colors.black.withValues(alpha: 0.04),
                               blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
@@ -535,7 +526,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                           border: Border.all(color: Colors.grey.shade200),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.04),
+                              color: Colors.black.withValues(alpha: 0.04),
                               blurRadius: 12,
                               offset: const Offset(0, 6),
                             ),
@@ -649,7 +640,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                             const SizedBox(height: 12),
                             if (_selectedBank != null)
                               Text(
-                                '${_selectedBank!['name']}: ${currency.format(sorteo.precioTicket * _cantidad)} (${_cantidad} boleto${_cantidad > 1 ? 's' : ''})',
+                                '${_selectedBank!['name']}: ${currency.format(sorteo.precioTicket * _cantidad)} ($_cantidad boleto${_cantidad > 1 ? 's' : ''})',
                                 style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
@@ -715,10 +706,10 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
   Widget _buildHeader() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.96),
+        color: Colors.white.withValues(alpha: 0.96),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -789,7 +780,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 12,
             offset: const Offset(0, 6),
           ),
@@ -943,7 +934,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.14),
+                    color: statusColor.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -1084,7 +1075,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
               boxShadow: isSelected
                   ? [
                       BoxShadow(
-                        color: primaryColor.withOpacity(0.2),
+                        color: primaryColor.withValues(alpha: 0.2),
                         blurRadius: 8,
                         offset: const Offset(0, 2),
                       ),
@@ -1129,7 +1120,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.06),
+        color: primaryColor.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
@@ -1259,9 +1250,9 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
         vertical: compact ? 6 : 8,
       ),
       decoration: BoxDecoration(
-        color: primaryColor.withOpacity(0.06),
+        color: primaryColor.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: primaryColor.withOpacity(0.2)),
+        border: Border.all(color: primaryColor.withValues(alpha: 0.2)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1331,7 +1322,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: primaryColor.withOpacity(0.06),
+                    color: primaryColor.withValues(alpha: 0.06),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Center(
