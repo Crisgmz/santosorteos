@@ -80,12 +80,29 @@ create table if not exists public.orden_items (
   primary key (order_id, boleto_id)
 );
 
+-- Comprobantes de reservas (imagen + metadatos)
+create table if not exists public.reservados (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid references public.ordenes(id) on delete cascade,
+  sorteo_id uuid not null references public.sorteos(id) on delete cascade,
+  buyer_nombre text not null,
+  buyer_cedula text not null,
+  buyer_telefono text not null,
+  numeros int[] not null,
+  banco text,
+  monto_total numeric(12,2),
+  comprobante_url text not null,
+  comprobante_nombre text,
+  created_at timestamptz not null default now()
+);
+
 -- RLS
 alter table public.sorteos enable row level security;
 alter table public.premios enable row level security;
 alter table public.boletos enable row level security;
 alter table public.ordenes enable row level security;
 alter table public.orden_items enable row level security;
+alter table public.reservados enable row level security;
 
 -- Políticas mínimas (lectura para autenticados, escrituras vía RPC)
 do $$
@@ -114,6 +131,20 @@ begin
     create policy "orden_items_select_owner" on public.orden_items
       for select using (auth.role() = 'authenticated');
   end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='reservados' and policyname='reservados_insert_public') then
+    create policy "reservados_insert_public" on public.reservados
+      for insert
+      to anon, authenticated
+      with check (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='reservados' and policyname='reservados_select_auth') then
+    create policy "reservados_select_auth" on public.reservados
+      for select
+      to authenticated
+      using (true);
+  end if;
 end $$;
 
 -- No permitir DML directo desde el cliente (lo haremos por RPC con SECURITY DEFINER)
@@ -122,6 +153,52 @@ revoke insert, update, delete on public.premios  from anon, authenticated;
 revoke insert, update, delete on public.boletos  from anon, authenticated;
 revoke insert, update, delete on public.ordenes  from anon, authenticated;
 revoke insert, update, delete on public.orden_items from anon, authenticated;
+grant select, insert on public.reservados to anon, authenticated;
+
+-- Bucket publico para comprobantes subidos desde la web
+insert into storage.buckets (id, name, public)
+values ('reservados', 'reservados', true)
+on conflict (id) do update set public = true;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'reservados_read_public'
+  ) then
+    create policy "reservados_read_public" on storage.objects
+      for select
+      to anon, authenticated
+      using (bucket_id = 'reservados');
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'reservados_insert_public'
+  ) then
+    create policy "reservados_insert_public" on storage.objects
+      for insert
+      to anon, authenticated
+      with check (bucket_id = 'reservados');
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'reservados_update_public'
+  ) then
+    create policy "reservados_update_public" on storage.objects
+      for update
+      to anon, authenticated
+      using (bucket_id = 'reservados')
+      with check (bucket_id = 'reservados');
+  end if;
+end $$;
 
 -- Disparador updated_at en sorteos
 create or replace function public.set_updated_at() returns trigger

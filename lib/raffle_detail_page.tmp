@@ -1,9 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:html' as html;
 import 'dart:typed_data';
 
-import 'MultisorteosPage.dart';
 import 'data/models.dart';
 import 'data/raffles_repository.dart';
 
@@ -62,7 +62,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
     },
   ];
 
-  // Titular dinámico según banco
+  // Titular dinÃ¡mico segÃºn banco
   String get _currentAccountHolder {
     if (_selectedBank?['name'] == 'BANCO BHD LEON') {
       return 'Adajet Travel, SRL';
@@ -101,8 +101,8 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
     });
 
     try {
-      // Tomar los siguientes numeros disponibles (orden creciente) y reservarlos
-      final disponibles = await _repo.fetchNextAvailableNumbers(
+      // Tomar nÃºmeros disponibles y reservarlos en la BD
+      final disponibles = await _repo.fetchAvailableNumbers(
         sorteo.id,
         _cantidad,
       );
@@ -144,10 +144,22 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
       );
 
       await _showReservationDialog();
-      _goToHome();
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+        );
+      }
+
+      await _sendWhatsAppMessage(
+        sorteo,
+        reservedNumbers: reservados,
+        orderId: orderId,
+      );
 
       setState(() {
-        _feedback = 'Boletos reservados! Nuestro equipo esta confirmando.';
+        _feedback = 'Â¡Boletos reservados! Redirigiendo a WhatsApp...';
       });
     } catch (e) {
       setState(() {
@@ -156,9 +168,8 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
     } finally {
       if (mounted) {
         setState(() {
-          _loading = false;
-        });
-      }
+        _loading = false;
+      });
     }
   }
 
@@ -171,8 +182,8 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
         return AlertDialog(
           title: const Text('Reserva realizada'),
           content: const Text(
-            'Su ticket ha sido reservado, nuestro equipo esta confirmando. '
-            'Puede verificar el estado de sus boletos utilizando su numero de telefono.',
+            'Su ticket ha sido reservado, nuestro equipo estÃ¡ confirmando. '
+            'Puede verificar el estado de sus boletos utilizando su nÃºmero de telÃ©fono.',
           ),
           actions: [
             TextButton(
@@ -184,6 +195,51 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
       },
     );
   }
+  }
+
+  Future<void> _sendWhatsAppMessage(
+    Sorteo sorteo, {
+    List<int>? reservedNumbers,
+    String? orderId,
+  }) async {
+    final currency = NumberFormat.currency(locale: 'es_DO', symbol: 'RD\$');
+    final numeros = reservedNumbers?.map((n) => n.toString().padLeft(4, '0'));
+    final numerosLinea = numeros != null && numeros.isNotEmpty
+        ? numeros.join(', ')
+        : 'N/D';
+    final message =
+        '''
+ðŸŽŸï¸ *NUEVA RESERVA DE BOLETOS*
+
+*Sorteo:* ${sorteo.titulo}
+*Cliente:* ${_nombreCtrl.text.trim()}
+*CÃ©dula:* ${_cedulaCtrl.text.trim()}
+*TelÃ©fono:* DO +1 ${_telefonoCtrl.text.trim()}
+*NÃºmeros:* $numerosLinea
+*Orden:* ${orderId ?? 'N/D'}
+
+*Cantidad:* $_cantidad boleto${_cantidad > 1 ? 's' : ''}
+*Precio por boleto:* ${currency.format(sorteo.precioTicket)}
+*Total:* ${currency.format(sorteo.precioTicket * _cantidad)}
+
+*Banco:* ${_selectedBank!['name']}
+*Cuenta:* ${_selectedBank!['account']}
+*Titular:* $_currentAccountHolder
+
+${_imageFileName != null ? 'ðŸ“¸ *Comprobante adjunto:* $_imageFileName' : 'âš ï¸ Sin comprobante'}
+    ''';
+
+    final encodedMessage = Uri.encodeComponent(message);
+    final whatsappUrl =
+        'https://api.whatsapp.com/send?phone=18496285498&text=$encodedMessage';
+
+    final uri = Uri.parse(whatsappUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      throw Exception('No se pudo abrir WhatsApp');
+    }
+  }
 
   bool _canConfirm() {
     return _nombreCtrl.text.trim().isNotEmpty &&
@@ -191,14 +247,6 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
         _telefonoCtrl.text.trim().isNotEmpty &&
         _selectedBank != null &&
         _imageFileName != null;
-  }
-
-  void _goToHome() {
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const MultisorteosPage()),
-      (route) => false,
-    );
   }
 
   Future<void> _pickImage() async {
@@ -371,7 +419,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                                   child: TextFormField(
                                     controller: _cedulaCtrl,
                                     decoration: InputDecoration(
-                                      labelText: 'Cédula *',
+                                      labelText: 'CÃ©dula *',
                                       border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(8),
                                       ),
@@ -388,7 +436,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                                   child: TextFormField(
                                     controller: _telefonoCtrl,
                                     decoration: InputDecoration(
-                                      labelText: 'Teléfono *',
+                                      labelText: 'TelÃ©fono *',
                                       prefixText: 'DO +1 ',
                                       border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(8),
@@ -408,7 +456,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Sección de bancos
+                      // SecciÃ³n de bancos
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(20),
@@ -446,7 +494,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Elegir una opción',
+                              'Elegir una opciÃ³n',
                               style: TextStyle(
                                 color: Colors.black54,
                                 fontSize: 13,
@@ -638,7 +686,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                             if (_imageFileName != null) ...[
                               const SizedBox(height: 8),
                               Text(
-                                '📎 $_imageFileName',
+                                'ðŸ“Ž $_imageFileName',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.green.shade700,
@@ -660,7 +708,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Botón confirmar
+                      // BotÃ³n confirmar
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
@@ -808,7 +856,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
             textInputAction: TextInputAction.search,
             onSubmitted: (_) => _buscarEnDetalle(),
             decoration: InputDecoration(
-              hintText: "Número de teléfono o #Boleto",
+              hintText: "NÃºmero de telÃ©fono o #Boleto",
               filled: true,
               fillColor: const Color(0xFFF8FAFC),
               border: OutlineInputBorder(
@@ -1212,7 +1260,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  sorteo.descripcion ?? 'Sin descripción disponible.',
+                  sorteo.descripcion ?? 'Sin descripciÃ³n disponible.',
                   style: const TextStyle(
                     color: Colors.black87,
                     fontSize: 15,
@@ -1296,7 +1344,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
             Icon(Icons.emoji_events_outlined, color: Colors.grey),
             SizedBox(width: 8),
             Text(
-              "Próximamente premios",
+              "PrÃ³ximamente premios",
               style: TextStyle(
                 fontWeight: FontWeight.w700,
                 color: Colors.black54,

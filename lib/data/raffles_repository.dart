@@ -1,9 +1,38 @@
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models.dart';
 
 class RafflesRepository {
   final SupabaseClient _client = Supabase.instance.client;
+
+  String _sanitizeFileName(String fileName) {
+    final cleaned = fileName
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9._-]+'), '_')
+        .replaceAll(RegExp('_+'), '_')
+        .trim();
+    return cleaned.isEmpty ? 'comprobante.jpg' : cleaned;
+  }
+
+  String _guessMimeType(String fileName) {
+    final parts = fileName.split('.');
+    if (parts.length < 2) return 'application/octet-stream';
+    switch (parts.last.toLowerCase()) {
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'webp':
+        return 'image/webp';
+      case 'heic':
+        return 'image/heic';
+      default:
+        return 'application/octet-stream';
+    }
+  }
 
   Future<List<Sorteo>> fetchActiveRaffles() async {
     final response = await _client
@@ -81,17 +110,28 @@ class RafflesRepository {
     return response.count ?? 0;
   }
 
-  Future<List<int>> fetchAvailableNumbers(String sorteoId, int limit) async {
+  Future<List<int>> fetchNextAvailableNumbers(
+    String sorteoId,
+    int quantity, {
+    int oversampleFactor = 3,
+  }) async {
+    final int take = (quantity * oversampleFactor).clamp(quantity, 5000);
     final response = await _client
         .from('boletos')
         .select('numero')
         .eq('sorteo_id', sorteoId)
         .eq('estado', 'available')
-        .order('numero')
-        .limit(limit);
+        .order('numero', ascending: true)
+        .limit(take);
 
     final data = response as List<dynamic>;
-    return data.map((e) => (e['numero'] as int)).toList();
+    final sorted = data
+        .map((e) => (e['numero'] as int))
+        .toList()
+      ..sort();
+
+    if (sorted.length <= quantity) return sorted;
+    return sorted.take(quantity).toList();
   }
 
   Future<List<VerifiedTicket>> verifyTickets(
@@ -187,5 +227,50 @@ class RafflesRepository {
     if (data.isEmpty) return null;
     final first = data.first as Map<String, dynamic>;
     return first['order_id'] as String?;
+  }
+
+  Future<String?> saveReservationProof({
+    required String orderId,
+    required String sorteoId,
+    required String buyerNombre,
+    required String buyerCedula,
+    required String buyerTelefono,
+    required List<int> numeros,
+    required Uint8List imageBytes,
+    required String imageName,
+    String? banco,
+    double? montoTotal,
+  }) async {
+    final safeName = _sanitizeFileName(imageName);
+    final storagePath =
+        'order_$orderId/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+
+    await _client.storage.from('reservados').uploadBinary(
+          storagePath,
+          imageBytes,
+          fileOptions: FileOptions(
+            cacheControl: '3600',
+            upsert: true,
+            contentType: _guessMimeType(imageName),
+          ),
+        );
+
+    final publicUrl =
+        _client.storage.from('reservados').getPublicUrl(storagePath);
+
+    await _client.from('reservados').insert({
+      'order_id': orderId,
+      'sorteo_id': sorteoId,
+      'buyer_nombre': buyerNombre,
+      'buyer_cedula': buyerCedula,
+      'buyer_telefono': buyerTelefono,
+      'numeros': numeros,
+      'banco': banco,
+      'monto_total': montoTotal,
+      'comprobante_url': publicUrl,
+      'comprobante_nombre': imageName,
+    });
+
+    return publicUrl;
   }
 }
