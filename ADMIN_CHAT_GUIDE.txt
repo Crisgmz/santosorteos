@@ -1,0 +1,853 @@
+================================================================================
+GUÍA COMPLETA PARA MÓDULO DE ADMINISTRADOR DE CHAT
+Sistema de Chat en Tiempo Real - SantoSorteos
+================================================================================
+
+ÍNDICE:
+1. Estructura de la Base de Datos
+2. Consultas SQL Útiles
+3. Funciones RPC Disponibles
+4. Código Flutter para Panel de Administrador
+5. Ejemplos de Uso
+6. Queries Importantes
+
+================================================================================
+1. ESTRUCTURA DE LA BASE DE DATOS
+================================================================================
+
+TABLA: chat_sessions
+--------------------
+Almacena las sesiones de chat de los usuarios.
+
+Columnas:
+- id (uuid, PK)                 - ID único de la sesión
+- user_id (uuid, FK)            - ID del usuario autenticado (puede ser null)
+- user_name (text)              - Nombre del usuario
+- user_phone (text)             - Teléfono del usuario
+- user_email (text)             - Email del usuario (opcional)
+- status (text)                 - Estado: 'active', 'closed', 'archived'
+- created_at (timestamptz)      - Fecha de creación
+- updated_at (timestamptz)      - Última actualización
+- last_message_at (timestamptz) - Fecha del último mensaje
+
+Índices:
+- idx_chat_sessions_user: user_id
+- idx_chat_sessions_status: status
+- idx_chat_sessions_updated: updated_at DESC
+
+
+TABLA: chat_messages
+--------------------
+Almacena los mensajes del chat.
+
+Columnas:
+- id (uuid, PK)            - ID único del mensaje
+- session_id (uuid, FK)    - ID de la sesión
+- sender_type (text)       - Tipo: 'user' o 'admin'
+- sender_id (uuid, FK)     - ID del remitente
+- sender_name (text)       - Nombre del remitente
+- message (text)           - Contenido del mensaje
+- is_read (boolean)        - Si fue leído (default: false)
+- created_at (timestamptz) - Fecha de creación
+
+Índices:
+- idx_chat_messages_session: session_id, created_at
+- idx_chat_messages_unread: session_id, is_read (WHERE is_read = false)
+
+
+================================================================================
+2. CONSULTAS SQL ÚTILES PARA EL ADMINISTRADOR
+================================================================================
+
+-- Obtener todas las sesiones activas ordenadas por último mensaje
+SELECT 
+  cs.id,
+  cs.user_name,
+  cs.user_phone,
+  cs.user_email,
+  cs.status,
+  cs.created_at,
+  cs.last_message_at,
+  COUNT(cm.id) FILTER (WHERE cm.sender_type = 'user' AND cm.is_read = false) as unread_count
+FROM chat_sessions cs
+LEFT JOIN chat_messages cm ON cm.session_id = cs.id
+WHERE cs.status = 'active'
+GROUP BY cs.id
+ORDER BY cs.last_message_at DESC NULLS LAST;
+
+
+-- Obtener mensajes de una sesión específica
+SELECT 
+  id,
+  sender_type,
+  sender_name,
+  message,
+  is_read,
+  created_at
+FROM chat_messages
+WHERE session_id = 'SESSION_ID_AQUI'
+ORDER BY created_at ASC;
+
+
+-- Contar mensajes no leídos por sesión
+SELECT 
+  session_id,
+  COUNT(*) as unread_count
+FROM chat_messages
+WHERE sender_type = 'user' 
+  AND is_read = false
+GROUP BY session_id;
+
+
+-- Obtener estadísticas generales
+SELECT 
+  COUNT(DISTINCT cs.id) as total_sessions,
+  COUNT(DISTINCT CASE WHEN cs.status = 'active' THEN cs.id END) as active_sessions,
+  COUNT(cm.id) as total_messages,
+  COUNT(CASE WHEN cm.sender_type = 'user' AND cm.is_read = false THEN 1 END) as unread_messages
+FROM chat_sessions cs
+LEFT JOIN chat_messages cm ON cm.session_id = cs.id;
+
+
+================================================================================
+3. FUNCIONES RPC DISPONIBLES
+================================================================================
+
+1. get_or_create_chat_session(p_user_name, p_user_phone, p_user_email)
+   - Obtiene o crea una sesión de chat
+   - Retorna: objeto chat_sessions
+
+2. send_chat_message(p_session_id, p_message, p_sender_type, p_sender_name)
+   - Envía un mensaje en una sesión
+   - p_sender_type: 'user' o 'admin'
+   - Retorna: objeto chat_messages
+
+3. mark_messages_as_read(p_session_id)
+   - Marca todos los mensajes de admin como leídos
+   - Retorna: número de mensajes marcados
+
+4. get_chat_messages(p_session_id, p_limit)
+   - Obtiene mensajes de una sesión
+   - p_limit: número máximo de mensajes (default: 50)
+   - Retorna: lista de mensajes
+
+
+================================================================================
+4. CÓDIGO FLUTTER PARA PANEL DE ADMINISTRADOR
+================================================================================
+
+A. MODELO DE DATOS
+------------------
+
+class ChatSession {
+  final String id;
+  final String? userId;
+  final String userName;
+  final String userPhone;
+  final String? userEmail;
+  final String status;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? lastMessageAt;
+  final int unreadCount;
+
+  ChatSession({
+    required this.id,
+    this.userId,
+    required this.userName,
+    required this.userPhone,
+    this.userEmail,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+    this.lastMessageAt,
+    this.unreadCount = 0,
+  });
+
+  factory ChatSession.fromJson(Map<String, dynamic> json) {
+    return ChatSession(
+      id: json['id'],
+      userId: json['user_id'],
+      userName: json['user_name'] ?? 'Usuario',
+      userPhone: json['user_phone'] ?? '',
+      userEmail: json['user_email'],
+      status: json['status'] ?? 'active',
+      createdAt: DateTime.parse(json['created_at']),
+      updatedAt: DateTime.parse(json['updated_at']),
+      lastMessageAt: json['last_message_at'] != null 
+          ? DateTime.parse(json['last_message_at']) 
+          : null,
+      unreadCount: json['unread_count'] ?? 0,
+    );
+  }
+}
+
+class ChatMessage {
+  final String id;
+  final String sessionId;
+  final String senderType;
+  final String? senderId;
+  final String senderName;
+  final String message;
+  final bool isRead;
+  final DateTime createdAt;
+
+  ChatMessage({
+    required this.id,
+    required this.sessionId,
+    required this.senderType,
+    this.senderId,
+    required this.senderName,
+    required this.message,
+    required this.isRead,
+    required this.createdAt,
+  });
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    return ChatMessage(
+      id: json['id'],
+      sessionId: json['session_id'],
+      senderType: json['sender_type'],
+      senderId: json['sender_id'],
+      senderName: json['sender_name'] ?? 'Usuario',
+      message: json['message'],
+      isRead: json['is_read'] ?? false,
+      createdAt: DateTime.parse(json['created_at']),
+    );
+  }
+}
+
+
+B. PÁGINA PRINCIPAL DEL ADMINISTRADOR
+--------------------------------------
+
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
+
+class AdminChatPage extends StatefulWidget {
+  const AdminChatPage({super.key});
+
+  @override
+  State<AdminChatPage> createState() => _AdminChatPageState();
+}
+
+class _AdminChatPageState extends State<AdminChatPage> {
+  final _supabase = Supabase.instance.client;
+  List<ChatSession> _sessions = [];
+  ChatSession? _selectedSession;
+  List<ChatMessage> _messages = [];
+  final _messageController = TextEditingController();
+  bool _isLoading = true;
+  bool _isSending = false;
+  RealtimeChannel? _channel;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSessions();
+    _subscribeToNewSessions();
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _channel?.unsubscribe();
+    super.dispose();
+  }
+
+  Future<void> _loadSessions() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      final response = await _supabase
+          .from('chat_sessions')
+          .select('''
+            *,
+            chat_messages!inner(id, sender_type, is_read)
+          ''')
+          .eq('status', 'active')
+          .order('last_message_at', ascending: false);
+
+      // Procesar y contar mensajes no leídos
+      final Map<String, int> unreadCounts = {};
+      
+      setState(() {
+        _sessions = (response as List).map((json) {
+          final sessionId = json['id'];
+          final messages = json['chat_messages'] as List? ?? [];
+          
+          // Contar mensajes no leídos del usuario
+          final unread = messages.where((m) => 
+            m['sender_type'] == 'user' && m['is_read'] == false
+          ).length;
+          
+          unreadCounts[sessionId] = unread;
+          
+          return ChatSession.fromJson({
+            ...json,
+            'unread_count': unread,
+          });
+        }).toList();
+      });
+    } catch (e) {
+      debugPrint('Error cargando sesiones: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _subscribeToNewSessions() {
+    _channel = _supabase
+        .channel('admin_chat_sessions')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'chat_sessions',
+          callback: (payload) {
+            _loadSessions(); // Recargar cuando hay cambios
+          },
+        )
+        .subscribe();
+  }
+
+  Future<void> _loadMessages(String sessionId) async {
+    try {
+      final response = await _supabase.rpc(
+        'get_chat_messages',
+        params: {'p_session_id': sessionId, 'p_limit': 100},
+      ) as List<dynamic>;
+
+      setState(() {
+        _messages = response
+            .map((e) => ChatMessage.fromJson(e as Map<String, dynamic>))
+            .toList();
+      });
+
+      // Marcar mensajes del usuario como leídos
+      await _supabase
+          .from('chat_messages')
+          .update({'is_read': true})
+          .eq('session_id', sessionId)
+          .eq('sender_type', 'user')
+          .eq('is_read', false);
+    } catch (e) {
+      debugPrint('Error cargando mensajes: $e');
+    }
+  }
+
+  Future<void> _sendMessage() async {
+    if (_messageController.text.trim().isEmpty || _selectedSession == null) {
+      return;
+    }
+
+    setState(() => _isSending = true);
+
+    try {
+      await _supabase.rpc(
+        'send_chat_message',
+        params: {
+          'p_session_id': _selectedSession!.id,
+          'p_message': _messageController.text.trim(),
+          'p_sender_type': 'admin',
+          'p_sender_name': 'Soporte',
+        },
+      );
+
+      _messageController.clear();
+      await _loadMessages(_selectedSession!.id);
+    } catch (e) {
+      debugPrint('Error enviando mensaje: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      setState(() => _isSending = false);
+    }
+  }
+
+  Future<void> _closeSession(String sessionId) async {
+    try {
+      await _supabase
+          .from('chat_sessions')
+          .update({'status': 'closed'})
+          .eq('id', sessionId);
+
+      await _loadSessions();
+      
+      if (_selectedSession?.id == sessionId) {
+        setState(() {
+          _selectedSession = null;
+          _messages.clear();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error cerrando sesión: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Panel de Chat - Administrador'),
+        backgroundColor: const Color(0xFF00C853),
+        foregroundColor: Colors.white,
+      ),
+      body: Row(
+        children: [
+          // Lista de sesiones (izquierda)
+          SizedBox(
+            width: 350,
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  color: Colors.grey[100],
+                  child: Row(
+                    children: [
+                      const Icon(Icons.chat_bubble_outline),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Conversaciones Activas (${_sessions.length})',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : _sessions.isEmpty
+                          ? const Center(
+                              child: Text('No hay conversaciones activas'),
+                            )
+                          : ListView.builder(
+                              itemCount: _sessions.length,
+                              itemBuilder: (context, index) {
+                                final session = _sessions[index];
+                                final isSelected = 
+                                    _selectedSession?.id == session.id;
+
+                                return ListTile(
+                                  selected: isSelected,
+                                  selectedTileColor: 
+                                      const Color(0xFF00C853).withOpacity(0.1),
+                                  leading: CircleAvatar(
+                                    backgroundColor: const Color(0xFF00C853),
+                                    child: Text(
+                                      session.userName[0].toUpperCase(),
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    session.userName,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  subtitle: Text(session.userPhone),
+                                  trailing: session.unreadCount > 0
+                                      ? Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.red,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Text(
+                                            '${session.unreadCount}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        )
+                                      : null,
+                                  onTap: () {
+                                    setState(() => _selectedSession = session);
+                                    _loadMessages(session.id);
+                                  },
+                                );
+                              },
+                            ),
+                ),
+              ],
+            ),
+          ),
+
+          const VerticalDivider(width: 1),
+
+          // Área de chat (derecha)
+          Expanded(
+            child: _selectedSession == null
+                ? const Center(
+                    child: Text('Selecciona una conversación'),
+                  )
+                : Column(
+                    children: [
+                      // Header de la conversación
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: const Color(0xFF00C853),
+                              child: Text(
+                                _selectedSession!.userName[0].toUpperCase(),
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _selectedSession!.userName,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    _selectedSession!.userPhone,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () => _closeSession(
+                                _selectedSession!.id,
+                              ),
+                              tooltip: 'Cerrar conversación',
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // Mensajes
+                      Expanded(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _messages.length,
+                          itemBuilder: (context, index) {
+                            final message = _messages[index];
+                            final isAdmin = message.senderType == 'admin';
+
+                            return Align(
+                              alignment: isAdmin
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: Container(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isAdmin
+                                      ? const Color(0xFF00C853)
+                                      : Colors.grey[200],
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                constraints: BoxConstraints(
+                                  maxWidth: 
+                                      MediaQuery.of(context).size.width * 0.6,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      message.message,
+                                      style: TextStyle(
+                                        color: isAdmin
+                                            ? Colors.white
+                                            : Colors.black87,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      DateFormat('HH:mm')
+                                          .format(message.createdAt),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: isAdmin
+                                            ? Colors.white70
+                                            : Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+
+                      // Input de mensaje
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 4,
+                              offset: const Offset(0, -2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _messageController,
+                                decoration: InputDecoration(
+                                  hintText: 'Escribe una respuesta...',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 12,
+                                  ),
+                                ),
+                                maxLines: null,
+                                onSubmitted: (_) => _sendMessage(),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            FloatingActionButton(
+                              onPressed: _isSending ? null : _sendMessage,
+                              backgroundColor: const Color(0xFF00C853),
+                              child: _isSending
+                                  ? const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.send,
+                                      color: Colors.white,
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+================================================================================
+5. EJEMPLOS DE USO
+================================================================================
+
+A. ENVIAR MENSAJE COMO ADMINISTRADOR
+-------------------------------------
+
+await supabase.rpc('send_chat_message', params: {
+  'p_session_id': 'uuid-de-la-sesion',
+  'p_message': 'Hola, ¿en qué puedo ayudarte?',
+  'p_sender_type': 'admin',
+  'p_sender_name': 'Soporte',
+});
+
+
+B. OBTENER SESIONES ACTIVAS CON MENSAJES NO LEÍDOS
+---------------------------------------------------
+
+final sessions = await supabase
+    .from('chat_sessions')
+    .select('*, chat_messages!inner(*)')
+    .eq('status', 'active')
+    .order('last_message_at', ascending: false);
+
+
+C. MARCAR SESIÓN COMO CERRADA
+------------------------------
+
+await supabase
+    .from('chat_sessions')
+    .update({'status': 'closed'})
+    .eq('id', sessionId);
+
+
+D. SUSCRIBIRSE A NUEVOS MENSAJES EN TIEMPO REAL
+------------------------------------------------
+
+final channel = supabase
+    .channel('admin_messages')
+    .onPostgresChanges(
+      event: PostgresChangeEvent.insert,
+      schema: 'public',
+      table: 'chat_messages',
+      callback: (payload) {
+        // Actualizar UI con nuevo mensaje
+        final newMessage = ChatMessage.fromJson(payload.newRecord);
+        // ... actualizar estado
+      },
+    )
+    .subscribe();
+
+
+================================================================================
+6. QUERIES IMPORTANTES PARA REPORTES
+================================================================================
+
+-- Sesiones por día
+SELECT 
+  DATE(created_at) as fecha,
+  COUNT(*) as total_sesiones
+FROM chat_sessions
+GROUP BY DATE(created_at)
+ORDER BY fecha DESC;
+
+
+-- Mensajes por hora del día
+SELECT 
+  EXTRACT(HOUR FROM created_at) as hora,
+  COUNT(*) as total_mensajes
+FROM chat_messages
+GROUP BY EXTRACT(HOUR FROM created_at)
+ORDER BY hora;
+
+
+-- Tiempo promedio de respuesta del admin
+SELECT 
+  AVG(
+    EXTRACT(EPOCH FROM (
+      admin_msg.created_at - user_msg.created_at
+    ))
+  ) / 60 as minutos_promedio
+FROM chat_messages user_msg
+JOIN chat_messages admin_msg 
+  ON admin_msg.session_id = user_msg.session_id
+  AND admin_msg.created_at > user_msg.created_at
+WHERE user_msg.sender_type = 'user'
+  AND admin_msg.sender_type = 'admin';
+
+
+-- Sesiones más activas
+SELECT 
+  cs.id,
+  cs.user_name,
+  COUNT(cm.id) as total_mensajes
+FROM chat_sessions cs
+JOIN chat_messages cm ON cm.session_id = cs.id
+GROUP BY cs.id, cs.user_name
+ORDER BY total_mensajes DESC
+LIMIT 10;
+
+
+================================================================================
+7. CONFIGURACIÓN DE REALTIME EN SUPABASE
+================================================================================
+
+1. Ve a Database → Replication en tu proyecto de Supabase
+2. Habilita Realtime para las tablas:
+   - chat_sessions
+   - chat_messages
+
+3. Configura los eventos que quieres escuchar:
+   - INSERT: Nuevos mensajes/sesiones
+   - UPDATE: Cambios en estado de sesiones
+   - DELETE: Sesiones eliminadas (opcional)
+
+
+================================================================================
+8. PERMISOS Y SEGURIDAD
+================================================================================
+
+Para el panel de administrador, asegúrate de:
+
+1. Verificar que el usuario es administrador:
+   - Usar auth.jwt()->>'user_metadata'->>'role' = 'admin'
+   - O crear una tabla de roles separada
+
+2. Crear políticas RLS específicas para admins:
+
+-- Ejemplo de política para admins
+CREATE POLICY "admins_can_view_all_sessions" 
+ON chat_sessions FOR SELECT
+TO authenticated
+USING (
+  (auth.jwt()->>'user_metadata'->>'role') = 'admin'
+);
+
+CREATE POLICY "admins_can_send_messages" 
+ON chat_messages FOR INSERT
+TO authenticated
+WITH CHECK (
+  (auth.jwt()->>'user_metadata'->>'role') = 'admin'
+  AND sender_type = 'admin'
+);
+
+
+================================================================================
+9. NOTIFICACIONES PUSH (OPCIONAL)
+================================================================================
+
+Para notificar a los admins de nuevos mensajes:
+
+1. Usar Supabase Realtime (ya implementado arriba)
+
+2. O crear una función que envíe notificaciones:
+
+CREATE OR REPLACE FUNCTION notify_new_user_message()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.sender_type = 'user' THEN
+    PERFORM pg_notify(
+      'new_user_message',
+      json_build_object(
+        'session_id', NEW.session_id,
+        'message', NEW.message,
+        'sender_name', NEW.sender_name
+      )::text
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_notify_new_user_message
+AFTER INSERT ON chat_messages
+FOR EACH ROW
+EXECUTE FUNCTION notify_new_user_message();
+
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
+
+Para más información o dudas, contacta al equipo de desarrollo.
+Última actualización: 2026-01-18

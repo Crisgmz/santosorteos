@@ -1,0 +1,561 @@
+================================================================================
+GUÍA DE IMPLEMENTACIÓN REAL-TIME - CHAT WEB FLUTTER
+Sistema Completo de Mensajería en Tiempo Real
+================================================================================
+
+✅ IMPLEMENTACIÓN COMPLETADA EN FLUTTER WEB
+
+El sistema de chat en tiempo real ya está completamente implementado en tu
+aplicación Flutter Web. Esta guía explica cómo funciona y cómo verificar que
+todo está operando correctamente.
+
+================================================================================
+PARTE 1: ¿QUÉ SE HA IMPLEMENTADO?
+================================================================================
+
+1. SUSCRIPCIÓN A MENSAJES EN TIEMPO REAL
+-----------------------------------------
+
+Ubicación: lib/chat_widget.dart
+Método: _subscribeToMessages()
+
+Características:
+✅ Recibe mensajes del admin automáticamente
+✅ Reconexión automática si se pierde la conexión
+✅ Prevención de mensajes duplicados
+✅ Logs detallados para depuración
+✅ Notificaciones visuales cuando llega un mensaje
+
+
+2. NOTIFICACIONES VISUALES
+---------------------------
+
+Ubicación: lib/chat_widget.dart
+Método: _showNewMessageNotification()
+
+Características:
+✅ SnackBar verde con diseño moderno
+✅ Muestra preview del mensaje (máx 50 caracteres)
+✅ Duración de 4 segundos
+✅ Diseño flotante con bordes redondeados
+
+
+3. LOGS DE DEPURACIÓN
+----------------------
+
+El sistema incluye logs detallados con emojis para fácil identificación:
+
+📡 Suscribiéndose a mensajes para sesión: [session_id]
+✅ Suscrito exitosamente a mensajes en tiempo real
+💬 Nuevo mensaje recibido en tiempo real!
+📨 Datos del mensaje: {...}
+✅ Mensaje agregado a la lista. Total mensajes: X
+⚠️ Mensaje duplicado o widget no montado, ignorando
+❌ Canal cerrado, intentando reconectar en 3 segundos...
+🔄 Reintentando suscripción...
+
+
+================================================================================
+PARTE 2: CONFIGURACIÓN REQUERIDA EN SUPABASE
+================================================================================
+
+PASO 1: HABILITAR REALTIME EN LAS TABLAS
+-----------------------------------------
+
+1. Ve a: https://app.supabase.com
+2. Selecciona tu proyecto
+3. Ve a: Database → Replication
+4. Habilita Realtime para estas tablas:
+
+   ☐ chat_sessions
+      - Marca: INSERT, UPDATE
+      
+   ☐ chat_messages
+      - Marca: INSERT, UPDATE
+
+5. Haz clic en "Save" o "Apply"
+
+
+PASO 2: VERIFICAR POLÍTICAS RLS
+--------------------------------
+
+Ejecuta en SQL Editor (Database → SQL Editor → New query):
+
+-- Política para leer sesiones
+CREATE POLICY IF NOT EXISTS "users_can_read_own_sessions" 
+ON chat_sessions FOR SELECT
+TO authenticated, anon
+USING (true);
+
+-- Política para leer mensajes
+CREATE POLICY IF NOT EXISTS "users_can_read_messages" 
+ON chat_messages FOR SELECT
+TO authenticated, anon
+USING (true);
+
+-- Política para insertar mensajes como usuario
+CREATE POLICY IF NOT EXISTS "users_can_insert_messages" 
+ON chat_messages FOR INSERT
+TO authenticated, anon
+WITH CHECK (sender_type = 'user');
+
+-- Política para que admins puedan insertar mensajes
+CREATE POLICY IF NOT EXISTS "admins_can_insert_messages" 
+ON chat_messages FOR INSERT
+TO authenticated
+WITH CHECK (sender_type = 'admin');
+
+
+PASO 3: VERIFICAR QUE LAS FUNCIONES RPC EXISTEN
+------------------------------------------------
+
+Ejecuta en SQL Editor:
+
+-- Verificar funciones
+SELECT routine_name 
+FROM information_schema.routines 
+WHERE routine_schema = 'public' 
+  AND routine_name IN (
+    'get_or_create_chat_session',
+    'send_chat_message',
+    'mark_messages_as_read',
+    'get_chat_messages'
+  );
+
+Deberías ver las 4 funciones listadas.
+
+
+================================================================================
+PARTE 3: CÓMO FUNCIONA EL SISTEMA
+================================================================================
+
+FLUJO COMPLETO:
+---------------
+
+1. USUARIO ABRE EL CHAT
+   - Se ejecuta _toggleChat()
+   - Se muestra el popup del chat
+
+2. USUARIO COMPLETA EL FORMULARIO
+   - Ingresa nombre, teléfono, email
+   - Presiona "Iniciar Chat"
+   - Se ejecuta _submitUserInfo()
+
+3. SE INICIALIZA EL CHAT
+   - Se ejecuta _initializeChat()
+   - Se llama a get_or_create_chat_session()
+   - Se obtiene el session_id
+
+4. SE CARGAN MENSAJES EXISTENTES
+   - Se ejecuta _loadMessages()
+   - Se llama a get_chat_messages()
+   - Se muestran mensajes anteriores
+
+5. SE SUSCRIBE A MENSAJES EN TIEMPO REAL
+   - Se ejecuta _subscribeToMessages()
+   - Se crea un canal de Realtime
+   - Se filtra por session_id
+   - Se escuchan eventos INSERT
+
+6. USUARIO ENVÍA MENSAJE
+   - Se ejecuta _sendMessage()
+   - Se agrega mensaje localmente (optimistic UI)
+   - Se llama a send_chat_message()
+   - El mensaje se guarda en la BD
+
+7. ADMIN RESPONDE
+   - Admin envía mensaje desde su panel
+   - PostgreSQL inserta el mensaje en chat_messages
+   - Supabase Realtime detecta el INSERT
+   - El evento se envía al cliente web
+   - Se ejecuta el callback en _subscribeToMessages()
+   - El mensaje se agrega a la lista
+   - Se muestra notificación visual
+   - Se marca como leído automáticamente
+
+
+================================================================================
+PARTE 4: PRUEBAS Y VERIFICACIÓN
+================================================================================
+
+PRUEBA 1: VERIFICAR SUSCRIPCIÓN
+--------------------------------
+
+1. Abre la aplicación web
+2. Abre el chat
+3. Completa el formulario
+4. Abre la consola de Flutter (en tu IDE o terminal)
+5. Busca estos logs:
+
+   ✅ LOGS ESPERADOS:
+   📡 Suscribiéndose a mensajes para sesión: [uuid]
+   📡 Estado de suscripción: RealtimeSubscribeStatus.subscribed
+   ✅ Suscrito exitosamente a mensajes en tiempo real
+
+   ❌ SI VES ESTO HAY UN PROBLEMA:
+   ❌ Canal cerrado...
+   ❌ Error en el canal...
+   ⏱️ Timeout en la suscripción
+
+
+PRUEBA 2: ENVIAR MENSAJE DESDE SQL (SIMULAR ADMIN)
+---------------------------------------------------
+
+1. Ve a Supabase → SQL Editor
+2. Ejecuta esta query (reemplaza SESSION_ID con tu session_id real):
+
+   SELECT send_chat_message(
+     'TU_SESSION_ID_AQUI'::uuid,
+     'Hola! Este es un mensaje de prueba desde SQL',
+     'admin',
+     'Soporte'
+   );
+
+3. Verifica en la app web:
+   ✅ El mensaje aparece automáticamente
+   ✅ Se muestra una notificación verde
+   ✅ El mensaje dice "Soporte" como remitente
+
+4. Verifica en la consola:
+   💬 Nuevo mensaje recibido en tiempo real!
+   📨 Datos del mensaje: {...}
+   ✅ Mensaje agregado a la lista. Total mensajes: X
+
+
+PRUEBA 3: ENVIAR MENSAJE DESDE PANEL ADMIN
+-------------------------------------------
+
+1. Abre el panel de administrador (Flutter Desktop/Web)
+2. Selecciona la sesión del usuario
+3. Envía un mensaje
+4. Verifica en la app web del usuario:
+   ✅ El mensaje aparece instantáneamente
+   ✅ Se muestra notificación
+
+
+PRUEBA 4: VERIFICAR RECONEXIÓN
+-------------------------------
+
+1. Abre la app web con el chat activo
+2. Desactiva el WiFi por 5 segundos
+3. Reactiva el WiFi
+4. Verifica en la consola:
+   ❌ Canal cerrado, intentando reconectar en 3 segundos...
+   🔄 Reintentando suscripción...
+   ✅ Suscrito exitosamente a mensajes en tiempo real
+
+5. Envía un mensaje de prueba desde SQL
+6. Verifica que llega correctamente
+
+
+================================================================================
+PARTE 5: SOLUCIÓN DE PROBLEMAS
+================================================================================
+
+PROBLEMA 1: Los mensajes no llegan en tiempo real
+--------------------------------------------------
+
+SÍNTOMA:
+- Envías mensaje desde admin/SQL
+- No aparece en la web del usuario
+- No hay logs de "💬 Nuevo mensaje recibido"
+
+SOLUCIONES:
+
+1. Verificar Realtime habilitado:
+   - Database → Replication
+   - chat_messages debe tener toggle verde
+
+2. Verificar suscripción activa:
+   - Buscar en consola: "✅ Suscrito exitosamente"
+   - Si no aparece, hay un problema de conexión
+
+3. Verificar session_id:
+   - El session_id debe ser el mismo en ambos lados
+   - Ejecutar en SQL:
+     SELECT * FROM chat_sessions ORDER BY created_at DESC LIMIT 1;
+
+4. Verificar políticas RLS:
+   - Ejecutar las políticas del PASO 2 de Parte 2
+
+5. Verificar en Chrome DevTools:
+   - F12 → Network → WS (WebSocket)
+   - Debe haber conexión a: wss://[proyecto].supabase.co/realtime/v1/websocket
+   - Estado: 101 Switching Protocols
+
+
+PROBLEMA 2: Error "function does not exist"
+--------------------------------------------
+
+SÍNTOMA:
+- Error al iniciar chat
+- Error al enviar mensaje
+- Logs: "function get_or_create_chat_session does not exist"
+
+SOLUCIÓN:
+1. Ejecutar el archivo chat_database.sql completo en Supabase
+2. Verificar que las funciones existen (ver PASO 3 de Parte 2)
+
+
+PROBLEMA 3: Mensajes duplicados
+--------------------------------
+
+SÍNTOMA:
+- El mismo mensaje aparece dos veces
+- Logs: "⚠️ Mensaje duplicado o widget no montado, ignorando"
+
+SOLUCIÓN:
+- Esto es normal y está controlado
+- El sistema previene duplicados automáticamente
+- Si persiste, verificar que no haya múltiples suscripciones
+
+
+PROBLEMA 4: Notificaciones no aparecen
+---------------------------------------
+
+SÍNTOMA:
+- Los mensajes llegan pero no se muestra el SnackBar verde
+
+SOLUCIÓN:
+1. Verificar que el mensaje es del admin:
+   - sender_type debe ser 'admin'
+
+2. Verificar logs:
+   - Debe aparecer: "✅ Mensaje agregado a la lista"
+
+3. Verificar que el widget está montado:
+   - El método verifica mounted antes de mostrar
+
+
+PROBLEMA 5: Canal se cierra constantemente
+-------------------------------------------
+
+SÍNTOMA:
+- Logs: "❌ Canal cerrado, intentando reconectar..."
+- Se repite cada 3 segundos
+
+SOLUCIONES:
+1. Verificar conexión a internet
+2. Verificar que Supabase está operativo
+3. Verificar límites de tu plan de Supabase
+4. Verificar firewall/proxy no bloquea WebSockets
+
+
+================================================================================
+PARTE 6: LOGS DE DEPURACIÓN - REFERENCIA COMPLETA
+================================================================================
+
+LOGS NORMALES (TODO BIEN):
+--------------------------
+
+🔍 Cargando mensajes para sesión: [uuid]
+✅ Mensajes cargados: 5
+📡 Suscribiéndose a mensajes para sesión: [uuid]
+📡 Estado de suscripción: RealtimeSubscribeStatus.subscribed
+✅ Suscrito exitosamente a mensajes en tiempo real
+📤 Enviando mensaje: "Hola"
+✅ Mensaje agregado localmente. Total mensajes: 6
+✅ Respuesta del servidor: {...}
+✅ Mensaje actualizado en índice 5
+💬 Nuevo mensaje recibido en tiempo real!
+📨 Datos del mensaje: {id: xyz, message: "Respuesta del admin", ...}
+✅ Mensaje agregado a la lista. Total mensajes: 7
+
+
+LOGS DE ERROR (HAY PROBLEMAS):
+-------------------------------
+
+❌ Error cargando mensajes: [detalles]
+❌ Error enviando mensaje: [detalles]
+❌ Canal cerrado, intentando reconectar en 3 segundos...
+❌ Error en el canal: [detalles]
+⏱️ Timeout en la suscripción
+⚠️ Mensaje duplicado o widget no montado, ignorando
+
+
+================================================================================
+PARTE 7: CHECKLIST DE VERIFICACIÓN
+================================================================================
+
+CONFIGURACIÓN SUPABASE:
+☐ Realtime habilitado en chat_sessions
+☐ Realtime habilitado en chat_messages
+☐ Políticas RLS ejecutadas
+☐ Funciones RPC verificadas
+
+CÓDIGO FLUTTER:
+☐ chat_widget.dart actualizado
+☐ Método _subscribeToMessages() con logs
+☐ Método _showNewMessageNotification() agregado
+☐ Llamada a notificación descomentada
+
+PRUEBAS:
+☐ Logs de suscripción visibles
+☐ Mensaje de prueba desde SQL llega
+☐ Notificación se muestra
+☐ Reconexión funciona
+☐ Múltiples mensajes funcionan
+
+PRODUCCIÓN:
+☐ Probado en diferentes navegadores
+☐ Probado con conexión lenta
+☐ Probado con pérdida de conexión
+☐ Probado con múltiples usuarios
+
+
+================================================================================
+PARTE 8: COMANDOS ÚTILES PARA DEPURACIÓN
+================================================================================
+
+-- Ver todas las sesiones activas
+SELECT * FROM chat_sessions 
+WHERE status = 'active' 
+ORDER BY created_at DESC;
+
+-- Ver mensajes de una sesión
+SELECT * FROM chat_messages 
+WHERE session_id = 'TU_SESSION_ID'
+ORDER BY created_at ASC;
+
+-- Contar mensajes no leídos
+SELECT COUNT(*) FROM chat_messages 
+WHERE session_id = 'TU_SESSION_ID' 
+  AND sender_type = 'user' 
+  AND is_read = false;
+
+-- Enviar mensaje de prueba como admin
+SELECT send_chat_message(
+  'TU_SESSION_ID'::uuid,
+  'Mensaje de prueba',
+  'admin',
+  'Soporte Test'
+);
+
+-- Ver últimas 10 sesiones con info
+SELECT 
+  id,
+  user_name,
+  user_phone,
+  status,
+  created_at,
+  last_message_at
+FROM chat_sessions
+ORDER BY created_at DESC
+LIMIT 10;
+
+
+================================================================================
+PARTE 9: MONITOREO EN PRODUCCIÓN
+================================================================================
+
+MÉTRICAS A VIGILAR:
+-------------------
+
+1. Tasa de reconexión
+   - Buscar: "🔄 Reintentando suscripción"
+   - Si es muy frecuente, hay problema de red
+
+2. Mensajes duplicados
+   - Buscar: "⚠️ Mensaje duplicado"
+   - Debe ser < 1% de mensajes totales
+
+3. Errores de canal
+   - Buscar: "❌ Error en el canal"
+   - Debe ser 0 en condiciones normales
+
+4. Tiempo de entrega
+   - Desde que admin envía hasta que usuario recibe
+   - Debe ser < 500ms en condiciones normales
+
+
+ALERTAS RECOMENDADAS:
+---------------------
+
+1. Si tasa de reconexión > 10%
+   → Revisar infraestructura de red
+
+2. Si errores de canal > 0
+   → Revisar configuración de Supabase
+
+3. Si tiempo de entrega > 2 segundos
+   → Revisar carga del servidor
+
+
+================================================================================
+PARTE 10: PRÓXIMAS MEJORAS (OPCIONAL)
+================================================================================
+
+1. INDICADOR DE "ESCRIBIENDO..."
+   - Mostrar cuando el admin está escribiendo
+   - Usar Broadcast de Supabase Realtime
+
+2. SONIDO DE NOTIFICACIÓN
+   - Reproducir sonido cuando llega mensaje
+   - Usar package: audioplayers
+
+3. NOTIFICACIONES PUSH
+   - Para cuando la app está en segundo plano
+   - Usar Firebase Cloud Messaging
+
+4. HISTORIAL DE CONVERSACIONES
+   - Guardar conversaciones cerradas
+   - Permitir buscar en historial
+
+5. ADJUNTAR ARCHIVOS
+   - Permitir enviar imágenes
+   - Usar Supabase Storage
+
+
+================================================================================
+RESUMEN EJECUTIVO
+================================================================================
+
+✅ IMPLEMENTACIÓN COMPLETADA
+
+El sistema de Real-Time está 100% implementado en tu aplicación Flutter Web.
+
+PARA QUE FUNCIONE NECESITAS:
+
+1. Habilitar Realtime en Supabase (5 minutos)
+   - Database → Replication
+   - Activar para chat_sessions y chat_messages
+
+2. Ejecutar políticas RLS (2 minutos)
+   - Copiar SQL de PASO 2, Parte 2
+   - Ejecutar en SQL Editor
+
+3. Probar (5 minutos)
+   - Abrir chat en la web
+   - Enviar mensaje de prueba desde SQL
+   - Verificar que llega automáticamente
+
+TIEMPO TOTAL: ~15 minutos
+
+LOGS QUE CONFIRMAN QUE FUNCIONA:
+✅ Suscrito exitosamente a mensajes en tiempo real
+💬 Nuevo mensaje recibido en tiempo real!
+✅ Mensaje agregado a la lista
+
+================================================================================
+SOPORTE
+================================================================================
+
+Si tienes problemas:
+
+1. Revisa la sección "SOLUCIÓN DE PROBLEMAS" (Parte 5)
+2. Verifica el CHECKLIST (Parte 7)
+3. Revisa los logs en la consola
+4. Ejecuta los comandos de depuración (Parte 8)
+
+Para reportar un bug:
+- Incluye los logs completos
+- Describe qué esperabas vs qué obtuviste
+- Indica si completaste el CHECKLIST
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
+
+Fecha: 2026-01-18
+Versión: 2.0 - Implementación Completa
+Sistema: Chat Real-Time Flutter Web

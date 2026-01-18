@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MangoPOS - Sistema de Ventas para Restaurantes</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root{
+      --orange:#f7941a;
+      --green:#32ad40;
+      --white:#ffffff;
+      --dark:#32363f;
+      --header-h:72px;
+      --header-h-mobile:60px;
+    }
+
+    html{ scroll-padding-top: var(--header-h); }
+    body{
+      font-family: 'Arial', sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+      color: var(--dark);
+      -webkit-text-size-adjust: 100%;
+      background: #fff;
+    }
+
+    /* Header */
+    .header{
+      position: fixed; top: 0; left: 0; right: 0;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+      padding: .8rem 0;
+      transition: all .3s ease;
+      border-bottom: 1px solid rgba(0,0,0,.06);
+    }
+    .nav{
+      display:flex; justify-content:space-between; align-items:center;
+      max-width:1200px; margin:0 auto; padding:0 1.25rem;
+    }
+    .logo{ display:flex; align-items:center; gap:8px; }
+    .logo img{ height:65px; width:auto; display:block; }
+    .logo-text{ font-size:1.2rem; font-weight:bold; color: var(--green); }
+    .nav-links{ display:flex; list-style:none; gap:2rem; }
+    .nav-links a{
+      text-decoration:none; color:var(--dark); font-weight:500;
+      transition:color .25s ease; padding:.5rem 0;
+    }
+    .nav-links a:hover{ color:var(--orange); }
+
+    .cta-button{
+      background: var(--green);
+      color:white; padding:.9rem 1.4rem; border:2px solid transparent;
+      border-radius:50px; font-weight:bold; cursor:pointer;
+      transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
+      text-decoration:none; display:inline-block; min-height:44px;
+    }
+    .cta-button:hover{
+      transform: translateY(-2px);
+      border-color: var(--orange);
+      box-shadow: 0 0 0 3px rgba(247,148,26,.30);
+    }
+    .header-spacer{ height: var(--header-h); }
+
+    /* Hero con video */
+    .hero{
+      min-height: 100svh;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+      padding: 2rem 0;
+      background: #101214;
+    }
+    .hero video{
+      position: absolute; inset: 0;
+      width: 100%; height: 100%; object-fit: cover; z-index: 0;
+    }
+    .hero::before{ content:""; position:absolute; inset:0; background:rgba(0,0,0,.45); z-index:1; }
+    .hero-content{ max-width: 800px; padding: 0 1.25rem; z-index: 2; color: #fff; }
+    .hero h1{ font-size: clamp(2rem, 5vw, 4rem); font-weight: 800; margin-bottom: .75rem; opacity:0; animation: fadeInUp 1s ease forwards; }
+    .hero p{ font-size: clamp(1rem, 2.5vw, 1.5rem); margin-bottom: 1.5rem; opacity:0; animation: fadeInUp 1s ease .3s forwards; }
+    .hero-buttons{ display:flex; gap:.75rem; justify-content:center; flex-wrap:wrap; opacity:0; animation: fadeInUp 1s ease .6s forwards; }
+
+    .btn-primary, .btn-secondary{
+      padding:.9rem 1.6rem; border-radius:50px; font-size:1rem; font-weight:700;
+      cursor:pointer; transition: all .25s ease; text-decoration:none; display:inline-block; min-height:44px;
+    }
+    .btn-primary{ background:var(--green); color:#fff; border:2px solid transparent; }
+    .btn-primary:hover{ transform:translateY(-2px); border-color:var(--orange); box-shadow:0 0 0 3px rgba(247,148,26,.30); }
+    .btn-secondary{ background:transparent; color:#fff; border:2px solid var(--orange); }
+    .btn-secondary:hover{ background:var(--orange); color:#fff; transform:translateY(-2px); box-shadow:0 0 0 3px rgba(247,148,26,.30); }
+
+    /* Features */
+    .features{ padding: 4rem 0; background:white; }
+    .container{ max-width:1200px; margin:0 auto; padding:0 1.25rem; }
+    .section-title{ text-align:center; font-size: clamp(1.6rem, 4vw, 3rem); margin-bottom: 2rem; color: var(--dark); }
+    .features-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+
+    .feature-card{
+      background:white; padding:1.5rem; border-radius:20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.08);
+      text-align:center; transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
+      border:3px solid rgba(0,0,0,.05); background-clip: padding-box;
+    }
+    .feature-card:hover{
+      transform: translateY(-6px);
+      box-shadow: 0 20px 60px rgba(0,0,0,.10);
+      border-color: var(--orange);           /* Solo borde naranja */
+    }
+
+    .feature-icon{
+      width:72px; height:72px; background: var(--green);
+      border:3px solid var(--green);         /* por defecto verde */
+      border-radius:50%; margin:0 auto .9rem;
+      display:flex; align-items:center; justify-content:center;
+      overflow:hidden; transition:border-color .25s ease, box-shadow .25s ease;
+    }
+    .feature-card:hover .feature-icon,
+    .feature-icon:hover{
+      border-color: var(--orange);           /* Solo cambia borde del icono */
+      box-shadow: 0 0 0 4px rgba(247,148,26,.12);
+    }
+    .feature-icon img{ display:block; object-fit:contain; filter:brightness(0) invert(1); transition:transform .25s ease; }
+    .feature-card:hover .feature-icon img{ transform:scale(1.06); }
+
+    /* Tamaños individuales (ajústalos a tu gusto) */
+    .icon-cohete{ width:38px; height:38px; }
+    .icon-multidispositivo{ width:42px; height:42px; }
+    .icon-reportes{ width:40px; height:40px; }
+    .icon-metododepago{ width:47px; height:47px; }
+    .icon-inventario{ width:40px; height:40px; }
+    .icon-redennuve{ width:40px; height:40px; }
+
+    .feature-card h3{ font-size:1.25rem; margin-bottom:.6rem; color:var(--dark); }
+    .feature-card p{ color:#666; line-height:1.6; }
+
+    /* Stats */
+    .stats{ background: var(--green); color:white; padding: 2.5rem 0; }
+    .stats-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:1rem; }
+    .stat-item{ text-align:center; }
+    .stat-number{ font-size: clamp(2rem, 6vw, 3rem); font-weight: 800; margin-bottom:.3rem; }
+    .stat-label{ font-size:1rem; opacity:.95; }
+
+    /* CTA + FORM */
+    .cta-section{ background: var(--dark); color:white; padding: 4rem 0; text-align:center; }
+    .cta-section h2{ font-size: clamp(1.6rem, 4.5vw, 2.5rem); margin-bottom: .8rem; }
+    .cta-section p{ font-size: 1.05rem; margin-bottom: 1.2rem; opacity:.92; }
+
+    .contact-form{
+      max-width:720px; margin: 1.5rem auto 0; text-align:left;
+      background: rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:16px; padding: 1rem;
+    }
+    .form-row{ display:grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+    .form-group{ margin-bottom:.85rem; }
+    .form-group label{ display:block; margin-bottom:.4rem; font-weight:600; color:#f6f6f6; font-size: 1rem; }
+    .form-group input,
+    .form-group textarea{
+      width:100%; padding: .9rem 1rem; border-radius:10px;
+      border:1px solid rgba(255,255,255,.25);
+      background: rgba(0,0,0,.25); color:#fff; outline:none; font-size:16px;
+    }
+    .form-group input::placeholder,.form-group textarea::placeholder{ color: rgba(255,255,255,.7); }
+    .form-actions{ text-align:right; margin-top:.4rem; }
+    .alert{ margin-top:.8rem; font-size:.95rem; }
+    .alert.ok{ color:#b9f6ca; }
+    .alert.err{ color:#ffb3b3; }
+
+    /* Animaciones / responsive */
+    @keyframes fadeInUp{ from{opacity:0; transform:translateY(50px);} to{opacity:1; transform:translateY(0);} }
+    @media (max-width: 768px){
+      :root{ --header-h: var(--header-h-mobile); }
+      html{ scroll-padding-top: var(--header-h-mobile); }
+      .nav-links{ display:none; }
+      .logo img{ height:60px; }
+      .cta-button{ padding: .8rem 1.1rem; }
+      .features{ padding: 3rem 0; }
+      .form-row{ grid-template-columns: 1fr; }
+      .feature-icon{ width:64px; height:64px; }
+      .icon-cohete{ width:36px; height:36px; }
+      .icon-multidispositivo{ width:40px; height:40px; }
+      .icon-reportes{ width:36px; height:36px; }
+      .icon-metododepago{ width:40px; height:40px; }
+      .icon-inventario{ width:38px; height:38px; }
+      .icon-redennuve{ width:36px; height:36px; }
+    }
+    @media (max-width: 480px){
+      .btn-primary, .btn-secondary{ width: 100%; text-align:center; }
+      .contact-form{ border-radius:12px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <nav class="nav">
+      <div class="logo">
+        <img src="logo.png" alt="MangoPOS Logo">
+        <span class="logo-text">MangoPOS</span>
+      </div>
+      <ul class="nav-links">
+        <li><a href="#inicio">Inicio</a></li>
+        <li><a href="#caracteristicas">Características</a></li>
+        <li><a href="#contacto">Contacto</a></li>
+      </ul>
+      <a class="cta-button" href="#contacto" aria-label="Ir a pre-registro">Pre-registrate</a>
+    </nav>
+  </header>
+
+  <div class="header-spacer" aria-hidden="true"></div>
+
+  <!-- Hero -->
+  <section class="hero" id="inicio">
+    <video autoplay muted loop playsinline>
+      <source src="3298011-uhd_2160_4096_25fps.mp4" type="video/mp4">
+      Tu navegador no soporta video en HTML5.
+    </video>
+
+    <div class="hero-content">
+      <h1>Algo Extraordinario Está Por Llegar</h1>
+      <p>Pronto serás parte de la revolución que transformará para siempre la forma en que los restaurantes operan</p>
+      <div class="hero-buttons">
+        <a href="#caracteristicas" class="btn-secondary">Descubrir Más</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features" id="caracteristicas">
+    <div class="container">
+      <h2 class="section-title reveal">¿Por qué elegir MangoPOS?</h2>
+      <div class="features-grid">
+        <div class="feature-card reveal">
+          <div class="feature-icon"><img src="Iconos/cohete.png" class="icon-cohete" alt="Rápido y Eficiente"></div>
+          <h3>Rápido y Eficiente</h3>
+          <p>Procesa órdenes en segundos y mejora la experiencia de tus clientes con nuestro sistema optimizado.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon"><img src="Iconos/multidispositivo.png" class="icon-multidispositivo" alt="Multi-dispositivo"></div>
+          <h3>Multi-dispositivo</h3>
+          <p>Funciona en tablets, móviles y computadoras. Tu equipo puede trabajar desde cualquier dispositivo.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon"><img src="Iconos/reportes.png" class="icon-reportes" alt="Reportes en Tiempo Real"></div>
+          <h3>Reportes en Tiempo Real</h3>
+          <p>Analiza ventas, productos más vendidos y rendimiento del personal con reportes detallados.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon"><img src="Iconos/metododepago.png" class="icon-metododepago" alt="Múltiples Formas de Pago"></div>
+          <h3>Múltiples Formas de Pago</h3>
+          <p>Acepta efectivo, tarjetas, transferencias y pagos digitales de forma integrada.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon"><img src="Iconos/inventario.png" class="icon-inventario" alt="Gestión de Inventario"></div>
+          <h3>Gestión de Inventario</h3>
+          <p>Controla tu stock automáticamente y recibe alertas cuando necesites reponer productos.</p>
+        </div>
+        <div class="feature-card reveal">
+          <div class="feature-icon"><img src="Iconos/redennuve.png" class="icon-redennuve" alt="En la Nube"></div>
+          <h3>En la Nube</h3>
+          <p>Accede a tu información desde cualquier lugar y mantén tus datos seguros en la nube.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stats -->
+  <section class="stats">
+    <div class="container">
+      <div class="stats-grid">
+        <div class="stat-item reveal">
+          <div class="stat-number">99.9%</div>
+          <div class="stat-label">Tiempo de Actividad</div>
+        </div>
+        <div class="stat-item reveal">
+          <div class="stat-number">24/7</div>
+          <div class="stat-label">Soporte Técnico</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA + Contact Form -->
+  <section class="cta-section" id="contacto">
+    <div class="container">
+      <h2 class="reveal">¿Listo para revolucionar tu restaurante?</h2>
+      <p class="reveal">Únete y se parte de la revolución de los Restaurantes</p>
+
+      <form id="preRegistroForm" class="contact-form reveal" novalidate>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="nombre">Nombre Completo *</label>
+            <input type="text" id="nombre" name="nombre" placeholder="Tu nombre" required>
+          </div>
+          <div class="form-group">
+            <label for="email">Correo Electrónico *</label>
+            <input type="email" id="email" name="email" placeholder="tunombre@correo.com" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="telefono">Teléfono</label>
+            <input type="tel" id="telefono" name="telefono" placeholder="+1 809 000 0000">
+          </div>
+          <div class="form-group">
+            <label for="negocio">Nombre del Restaurante/Negocio</label>
+            <input type="text" id="negocio" name="negocio" placeholder="Ej: La Terraza Gourmet">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="mensaje">Mensaje</label>
+          <textarea id="mensaje" name="mensaje" rows="4" placeholder="Cuéntanos brevemente sobre tu operación y lo que necesitas."></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Ser Parte del Futuro</button>
+        </div>
+        <div id="formAlert" class="alert" aria-live="polite"></div>
+      </form>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <p>&copy; 2025 MangoPOS. Todos los derechos reservados.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Reveal simple
+    function reveal() {
+      document.querySelectorAll('.reveal').forEach((el) => {
+        const windowH = window.innerHeight;
+        const top = el.getBoundingClientRect().top;
+        if (top < windowH - 150) el.classList.add('active');
+      });
+    }
+    window.addEventListener('scroll', reveal); reveal();
+
+    // Smooth links
+    document.querySelectorAll('a[href^="#"]').forEach(a=>{
+      a.addEventListener('click', e=>{
+        e.preventDefault();
+        const t = document.querySelector(a.getAttribute('href'));
+        if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
+      });
+    });
+
+    // Header style on scroll
+    window.addEventListener('scroll', ()=>{
+      const h = document.querySelector('.header');
+      if (window.scrollY > 100){ h.style.background='rgba(255,255,255,0.98)'; h.style.boxShadow='0 2px 20px rgba(0,0,0,0.1)'; }
+      else { h.style.background='rgba(255,255,255,0.95)'; h.style.boxShadow='none'; }
+    });
+
+    // Fake counters (unchanged)
+    function animateCounters(){
+      document.querySelectorAll('.stat-number').forEach(counter=>{
+        const text = counter.textContent.trim();
+        if (text.includes('%') || text.includes('/')) return;
+        const target = parseInt(counter.textContent.replace(/[^\d]/g,''),10);
+        let current = 0, inc = target/100;
+        const timer = setInterval(()=>{
+          current += inc;
+          if (current >= target){ current = target; clearInterval(timer); }
+          counter.textContent = Math.floor(current).toLocaleString() + '+';
+        }, 50);
+      });
+    }
+    const statsSection = document.querySelector('.stats');
+    const io = new IntersectionObserver((e)=>{ e.forEach(x=>{ if (x.isIntersecting){ animateCounters(); io.unobserve(x.target);} }); });
+    io.observe(statsSection);
+
+    // Envío del formulario -> a send.php (PHP en tu hosting)
+    const preForm = document.getElementById('preRegistroForm');
+    const formAlert = document.getElementById('formAlert');
+
+    preForm.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const data = {
+        nombre: document.getElementById('nombre').value.trim(),
+        email: document.getElementById('email').value.trim(),
+        telefono: document.getElementById('telefono').value.trim(),
+        negocio: document.getElementById('negocio').value.trim(),
+        mensaje: document.getElementById('mensaje').value.trim()
+      };
+      if (!data.nombre || !data.email){
+        formAlert.textContent = 'Por favor completa nombre y correo.'; formAlert.className='alert err'; return;
+      }
+      try{
+        formAlert.textContent='Enviando…'; formAlert.className='alert';
+        const res = await fetch('send.php',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+        const json = await res.json();
+        if(!res.ok) throw new Error(json?.error || 'Error al enviar');
+        formAlert.textContent='¡Gracias! Tu pre-registro fue enviado correctamente.'; formAlert.className='alert ok';
+        preForm.reset();
+      }catch(err){
+        formAlert.textContent='No se pudo enviar el mensaje. Inténtalo de nuevo o escribe a Mangopos.do@gmail.com.';
+        formAlert.className='alert err'; console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>

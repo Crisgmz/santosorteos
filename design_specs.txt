@@ -1,0 +1,106 @@
+DOCUMENTACIÓN DE DISEÑO Y UI - MULTISORTEOS
+
+=====================================================================
+1. PALETA DE COLORES
+=====================================================================
+Color Primario (Azul Marca):
+- Hex: #007BFF
+- Uso: Botones principales, Títulos, Iconos destacados, Bordes de selección.
+
+Color de Fondo (Background):
+- Hex: #F8FAFC (Gris muy claro / Azulado)
+- Uso: Fondo general de la página para dar limpieza.
+
+Colores de Texto:
+- Títulos Principales: #007BFF (Primario)
+- Títulos de Sección: #007BFF (Primario)
+- Texto General / Párrafos: Colors.black54 (Gris oscuro suave)
+- Texto Títulos Cartas: #111827 (Gris muy oscuro, casi negro)
+- Subtítulos / Metadatos: #6B7280 (Gris medio)
+
+Colores de Estado:
+- Éxito (Verde): #16A34A (Bordes), #22C55E (Gradientes)
+- Alerta / Error (Rojo): Colors.red
+- Dorado (Premium/Hover): #D4AF37 (Usado en sombras y bordes al hacer hover en tarjetas)
+
+Degradados:
+- Inicio (Hero): LinearGradient de Blanco a Azul muy claro (#E3F2FD aprox).
+- Footer: LinearGradient de #0F172A a #020617 (Tonos oscuros noche/profundo).
+- Barra de Progreso: LinearGradient de #38BDF8 a #007BFF (Azul claro a Primario).
+
+=====================================================================
+2. TIPOGRAFÍA Y ESTILOS DE TEXTO
+=====================================================================
+Fuente: Roboto (Por defecto en Flutter, a menos que se haya cargado otra).
+
+Título Principal (Hero / Banner):
+- Tamaño: 38 (Móvil/Desktop base)
+- Peso: w900 (Black)
+- Letter Spacing: 1.0
+
+Títulos de Sección (ej. "SORTEOS ACTUALES"):
+- Tamaño: 32
+- Peso: w900 (Black)
+- Letter Spacing: 0.8
+- Color: Primario
+
+Texto General:
+- Tamaño: 16 (Escalas a 18 en secciones destacadas)
+- Peso: Normal
+- Color: Colors.black54
+
+=====================================================================
+3. LAYOUT Y RESPONSIVIDAD
+=====================================================================
+Contenedor Principal:
+- Max Width: 1200px (Centrado en pantallas grandes).
+- Padding Lateral: 16px (Móvil), Ajustable en secciones.
+
+Breakpoints (Puntos de quiebre):
+- Móvil: < 900px (Cambia menú a hamburguesa, columnas apiladas).
+- Desktop: >= 900px (Menú horizontal visible, filas lado a lado).
+
+Secciones Clave:
+- Header: Sticky/Fixed al top. Fondo blanco con 96% opacidad y blur. Sombra suave.
+- Hero (Inicio): Gradiente suave, texto a la izquierda, logo a la derecha (en desktop).
+- Grid de Sorteos: Wrap con espaciado de 48px.
+
+=====================================================================
+4. COMPONENTES UI
+=====================================================================
+Botones (ElevatedButton):
+- BorderRadius: 12px (Redondeado moderno).
+- Padding Vertical: 14px.
+- Sombra: Elevation 4 (reposo), Elevation 8 (hover).
+- Texto: Bold / Heavy, Mayúsculas usualmente.
+
+Inputs (TextField):
+- Relleno: Filled color #F8FAFC.
+- Bordes: Radius 12px. BorderSide gris claro. Focus color Primario.
+
+Tarjetas (Cards - Sorteos):
+- Fondo: Blanco.
+- Borde: Gris claro #E5E7EB (reposo), Dorado #D4AF37 (hover/focus).
+- Sombra: Suave y difusa. Se intensifica y toma tono dorado al hacer hover.
+- Animación: Escala 1.03x al pasar el mouse.
+- Imagen: Aspect Ratio 3:5. Bordes redondeados superiores.
+
+Footer:
+- Fondo oscuro.
+- Disposición: 4 Columnas en desktop (Logo, Secciones, Contacto, Redes).
+- Texto blanco/gris claro.
+
+=====================================================================
+5. ELEMENTOS GRÁFICOS
+=====================================================================
+- Iconos: Material Icons (Rounded o Outlined según el caso).
+- Logos de Bancos: Assets locales en `assets/imagenes/`.
+- Imágenes de Sorteos: Network Images con caché.
+
+=====================================================================
+6. HERRAMIENTAS Y LIBRERÍAS CLAVE
+=====================================================================
+- Flutter Web.
+- Google Fonts (implícito).
+- CachedNetworkImage (Optimización de carga).
+- FontAwesome (si se llegara a usar, por ahora Material Icons cubre todo).

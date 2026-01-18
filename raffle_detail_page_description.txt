@@ -1,0 +1,42 @@
+# Descripción de RaffleDetailPage.dart
+
+## Propósito General
+Esta pantalla (`RaffleDetailPage`) es la encargada de mostrar el detalle completo de un sorteo específico y gestionar el flujo de compra/reserva de boletos por parte del usuario.
+
+## Características Principales
+
+### 1. Visualización del Sorteo (Hero Section)
+-   **Imagen y Título:** Muestra la imagen del sorteo, título y descripción.
+-   **Información Clave:** Presenta el precio por boleto y la fecha del sorteo.
+-   **Barra de Progreso:** Indica visualmente el porcentaje de boletos vendidos.
+-   **Premios:** Lista los premios disponibles (si los hay) con su posición y descripción.
+-   **Diseño Responsivo:** Se adapta a móviles (columna) y escritorio (fila).
+
+### 2. Estado del Sorteo
+-   Verifica si la fecha del sorteo ya pasó.
+-   Si finalizó, muestra un mensaje de "SORTEO FINALIZADO" y bloquea la compra.
+
+### 3. Selección de Boletos
+-   **Contador:** Permite al usuario seleccionar la cantidad de boletos a comprar.
+-   **Cálculo de Total:** Muestra el precio total en tiempo real (Precio x Cantidad).
+
+### 4. Formulario de Datos Personales
+-   Campos para capturar: Nombre, Apellido, Cédula y Teléfono.
+-   Validación básica para asegurar que los datos no estén vacíos.
+
+### 5. Métodos de Pago
+-   **Lista de Bancos:** Muestra tarjetas seleccionables con лого, nombre del banco y número de cuenta.
+-   **Titular Dinámico:** Muestra el nombre del titular de la cuenta según el banco seleccionado (ej. "Adajet Travel", "Santo Rafael", etc.).
+-   **Link de Pago:** Incluye una opción especial "TARJETA DE CRÉDITO (LINK DE PAGO)" que cambia el flujo de confirmación.
+
+### 6. Subida de Comprobante
+-   Permite al usuario subir una foto/captura del comprobante de pago.
+-   Usa `file_picker` para seleccionar la imagen.
+-   Este paso es obligatorio para pagos bancarios, pero se omite para la opción de "Link de Pago".
+
+### 7. Lógica de Confirmación (`_onConfirmar`)
+-   **Validación:** Verifica campos completados y disponibilidad de boletos.
+-   **Reserva:** Contacta al repositorio (`RafflesRepository`) para obtener los siguientes números disponibles y generar la reserva.
+-   **Guardado:** Guarda la prueba de reserva (con imagen adjunta si aplica).
+-   **Integración WhatsApp:** Si se elige "Link de Pago", redirige automáticamente a WhatsApp con un mensaje pre-llenado solicitando el link.
+-   **Diálogo de Éxito:** Muestra un modal confirmando la reserva y proporcionando un enlace único para verificar el estado del ticket.

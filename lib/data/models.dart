@@ -35,6 +35,9 @@ class Sorteo {
   final List<Premio> premios;
   final int soldTickets;
 
+  final int promoBuy;
+  final int promoGet;
+
   const Sorteo({
     required this.id,
     required this.titulo,
@@ -45,6 +48,8 @@ class Sorteo {
     this.imagenUrl,
     this.premios = const [],
     this.soldTickets = 0,
+    this.promoBuy = 0,
+    this.promoGet = 0,
   });
 
   factory Sorteo.fromMap(Map<String, dynamic> map, {int soldTickets = 0}) {
@@ -63,6 +68,8 @@ class Sorteo {
           .map((p) => Premio.fromMap(p as Map<String, dynamic>))
           .toList(),
       soldTickets: soldTickets,
+      promoBuy: map['promocion_cantidad_compra'] as int? ?? 0,
+      promoGet: map['promocion_cantidad_regalo'] as int? ?? 0,
     );
   }
 
@@ -70,6 +77,8 @@ class Sorteo {
     if (totalTickets == 0) return 0;
     return soldTickets / totalTickets;
   }
+
+  bool get hasPromo => promoBuy > 0 && promoGet > 0;
 
   Sorteo copyWith({int? soldTickets}) {
     return Sorteo(
@@ -82,6 +91,8 @@ class Sorteo {
       imagenUrl: imagenUrl,
       premios: premios,
       soldTickets: soldTickets ?? this.soldTickets,
+      promoBuy: promoBuy,
+      promoGet: promoGet,
     );
   }
 }
@@ -119,10 +130,18 @@ class VerifiedTicket {
       numero: int.tryParse('${map['numero']}') ?? 0,
       estado: (map['estado'] ?? '').toString(),
       sorteoId: (map['sorteo_id'] ?? '').toString(),
-      sorteoTitulo: (map['sorteo']?['titulo'] ?? map['sorteo_titulo_snapshot'] ?? '').toString(),
-      buyerNombre: map['buyer_nombre'] as String?,
-      buyerTelefono: map['buyer_telefono'] as String?,
-      buyerCedula: map['buyer_cedula'] as String?,
+      sorteoTitulo:
+          (map['sorteo']?['titulo'] ?? map['sorteo_titulo_snapshot'] ?? '')
+              .toString(),
+      buyerNombre:
+          map['buyer_nombre'] as String? ??
+          map['orden']?['buyer_nombre'] as String?,
+      buyerTelefono:
+          map['buyer_telefono'] as String? ??
+          map['orden']?['buyer_telefono'] as String?,
+      buyerCedula:
+          map['buyer_cedula'] as String? ??
+          map['orden']?['buyer_cedula'] as String?,
       precio: map['precio_snapshot'] != null
           ? double.tryParse('${map['precio_snapshot']}')
           : null,

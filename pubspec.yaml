@@ -37,6 +37,8 @@ dependencies:
   supabase_flutter: ^2.5.9
   intl: ^0.20.2
   file_picker: ^10.3.7
+  image_picker: ^1.0.7
+  cached_network_image: ^3.4.1
   carousel_slider: ^5.1.1
   qr_flutter: ^4.1.0
   image_gallery_saver: ^2.0.3
@@ -45,6 +47,7 @@ dependencies:
   web: ^1.1.1
   url_launcher: ^6.3.1
   image: ^4.3.0
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

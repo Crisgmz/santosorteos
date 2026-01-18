@@ -1,0 +1,700 @@
+================================================================================
+GUÍA DE ACTUALIZACIÓN EN TIEMPO REAL - CHAT WEB
+Sistema de Recepción de Mensajes en Vivo
+================================================================================
+
+ÍNDICE:
+1. Cómo Funciona Supabase Realtime
+2. Implementación Actual en chat_widget.dart
+3. Mejoras y Optimizaciones Recomendadas
+4. Solución de Problemas Comunes
+5. Configuración en Supabase Dashboard
+6. Código de Ejemplo Mejorado
+7. Testing y Depuración
+
+================================================================================
+1. CÓMO FUNCIONA SUPABASE REALTIME
+================================================================================
+
+Supabase Realtime utiliza WebSockets para enviar actualizaciones en tiempo real
+desde la base de datos a los clientes conectados.
+
+FLUJO DE DATOS:
+1. Usuario/Admin inserta un mensaje en la tabla chat_messages
+2. PostgreSQL dispara un evento de cambio
+3. Supabase Realtime captura el evento
+4. El evento se envía a todos los clientes suscritos
+5. El cliente recibe el evento y actualiza la UI
+
+EVENTOS DISPONIBLES:
+- INSERT: Cuando se inserta un nuevo registro
+- UPDATE: Cuando se actualiza un registro
+- DELETE: Cuando se elimina un registro
+- * (ALL): Todos los eventos anteriores
+
+
+================================================================================
+2. IMPLEMENTACIÓN ACTUAL EN chat_widget.dart
+================================================================================
+
+UBICACIÓN DEL CÓDIGO:
+Archivo: lib/chat_widget.dart
+Método: _subscribeToMessages() (línea ~115)
+
+CÓDIGO ACTUAL:
+--------------
+
+void _subscribeToMessages() {
+  if (_sessionId == null) return;
+
+  _channel = _supabase
+      .channel('chat_messages_$_sessionId')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'chat_messages',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'session_id',
+          value: _sessionId,
+        ),
+        callback: (payload) {
+          final newMessage = payload.newRecord;
+          
+          // Evitar duplicados
+          final messageId = newMessage['id'];
+          final exists = _messages.any((m) => m['id'] == messageId);
+          
+          if (!exists && mounted) {
+            setState(() {
+              _messages.add(newMessage);
+            });
+            _scrollToBottom();
+
+            // Marcar como leído si es del admin
+            if (newMessage['sender_type'] == 'admin') {
+              _markMessagesAsRead();
+            }
+          }
+        },
+      )
+      .subscribe();
+}
+
+CUÁNDO SE LLAMA:
+- Se llama en _initializeChat() después de cargar los mensajes existentes
+- Se ejecuta UNA VEZ cuando el usuario inicia el chat
+- Permanece activo hasta que se cierra la sesión o la página
+
+
+================================================================================
+3. MEJORAS Y OPTIMIZACIONES RECOMENDADAS
+================================================================================
+
+A. RECONEXIÓN AUTOMÁTICA
+-------------------------
+
+Problema: Si se pierde la conexión, no se reconecta automáticamente.
+
+Solución: Agregar manejo de estados del canal
+
+void _subscribeToMessages() {
+  if (_sessionId == null) return;
+
+  _channel = _supabase
+      .channel('chat_messages_$_sessionId')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'chat_messages',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'session_id',
+          value: _sessionId,
+        ),
+        callback: (payload) {
+          final newMessage = payload.newRecord;
+          final messageId = newMessage['id'];
+          final exists = _messages.any((m) => m['id'] == messageId);
+          
+          if (!exists && mounted) {
+            setState(() {
+              _messages.add(newMessage);
+            });
+            _scrollToBottom();
+
+            if (newMessage['sender_type'] == 'admin') {
+              _markMessagesAsRead();
+              // Opcional: Mostrar notificación
+              _showNewMessageNotification(newMessage['message']);
+            }
+          }
+        },
+      )
+      .subscribe((status, error) {
+        if (status == RealtimeSubscribeStatus.subscribed) {
+          debugPrint('✅ Suscrito a mensajes en tiempo real');
+        } else if (status == RealtimeSubscribeStatus.closed) {
+          debugPrint('❌ Canal cerrado, intentando reconectar...');
+          // Reintentar suscripción después de 3 segundos
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted && _sessionId != null) {
+              _subscribeToMessages();
+            }
+          });
+        } else if (status == RealtimeSubscribeStatus.channelError) {
+          debugPrint('❌ Error en el canal: $error');
+        }
+      });
+}
+
+
+B. NOTIFICACIÓN VISUAL DE NUEVO MENSAJE
+----------------------------------------
+
+Agregar este método para mostrar una notificación cuando llega un mensaje del admin:
+
+void _showNewMessageNotification(String message) {
+  if (!mounted) return;
+  
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          const Icon(Icons.message, color: Colors.white),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Nuevo mensaje: ${message.length > 50 ? message.substring(0, 50) + '...' : message}',
+            ),
+          ),
+        ],
+      ),
+      backgroundColor: const Color(0xFF00C853),
+      duration: const Duration(seconds: 3),
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
+}
+
+
+C. INDICADOR DE "ESCRIBIENDO..."
+---------------------------------
+
+Para mostrar cuando el admin está escribiendo:
+
+1. Agregar variable de estado:
+   bool _adminIsTyping = false;
+
+2. Suscribirse a eventos de "typing":
+
+void _subscribeToTypingIndicator() {
+  if (_sessionId == null) return;
+
+  _supabase
+      .channel('typing_$_sessionId')
+      .onBroadcast(
+        event: 'typing',
+        callback: (payload) {
+          if (payload['sender_type'] == 'admin' && mounted) {
+            setState(() {
+              _adminIsTyping = payload['is_typing'] ?? false;
+            });
+            
+            // Auto-ocultar después de 3 segundos
+            if (_adminIsTyping) {
+              Future.delayed(const Duration(seconds: 3), () {
+                if (mounted) {
+                  setState(() => _adminIsTyping = false);
+                });
+              });
+            }
+          }
+        },
+      )
+      .subscribe();
+}
+
+3. Mostrar indicador en la UI:
+
+if (_adminIsTyping)
+  Padding(
+    padding: const EdgeInsets.all(12),
+    child: Row(
+      children: [
+        const SizedBox(width: 12),
+        Text(
+          'Soporte está escribiendo...',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[600],
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation(Colors.grey[600]),
+          ),
+        ),
+      ],
+    ),
+  ),
+
+
+D. SONIDO DE NOTIFICACIÓN
+--------------------------
+
+Para reproducir un sonido cuando llega un mensaje:
+
+1. Agregar dependencia en pubspec.yaml:
+   audioplayers: ^5.0.0
+
+2. Agregar método:
+
+import 'package:audioplayers/audioplayers.dart';
+
+final _audioPlayer = AudioPlayer();
+
+Future<void> _playNotificationSound() async {
+  try {
+    await _audioPlayer.play(AssetSource('sounds/notification.mp3'));
+  } catch (e) {
+    debugPrint('Error reproduciendo sonido: $e');
+  }
+}
+
+3. Llamar en el callback:
+
+if (newMessage['sender_type'] == 'admin') {
+  _playNotificationSound();
+  _markMessagesAsRead();
+}
+
+
+================================================================================
+4. SOLUCIÓN DE PROBLEMAS COMUNES
+================================================================================
+
+PROBLEMA 1: Los mensajes no llegan en tiempo real
+--------------------------------------------------
+
+CAUSAS POSIBLES:
+1. Realtime no está habilitado en Supabase
+2. El canal no está suscrito correctamente
+3. El filtro de session_id no coincide
+4. Problemas de red/firewall
+
+SOLUCIÓN:
+1. Verificar en Supabase Dashboard:
+   - Database → Replication
+   - Asegurarse que chat_messages tiene Realtime habilitado
+
+2. Agregar logs de depuración:
+
+.subscribe((status, error) {
+  debugPrint('📡 Estado de suscripción: $status');
+  if (error != null) {
+    debugPrint('❌ Error: $error');
+  }
+});
+
+3. Verificar que _sessionId no es null:
+
+debugPrint('🔍 Session ID: $_sessionId');
+
+4. Probar la conexión manualmente:
+
+// En la consola de Supabase SQL Editor:
+SELECT * FROM chat_messages 
+WHERE session_id = 'TU_SESSION_ID' 
+ORDER BY created_at DESC;
+
+
+PROBLEMA 2: Mensajes duplicados
+--------------------------------
+
+CAUSA: El evento INSERT se dispara y también se agrega localmente
+
+SOLUCIÓN: Ya implementada en el código actual con verificación de ID:
+
+final messageId = newMessage['id'];
+final exists = _messages.any((m) => m['id'] == messageId);
+
+if (!exists && mounted) {
+  // Agregar mensaje
+}
+
+
+PROBLEMA 3: La conexión se pierde después de un tiempo
+-------------------------------------------------------
+
+CAUSA: Timeout de WebSocket o cambio de red
+
+SOLUCIÓN: Implementar heartbeat y reconexión (ver sección 3.A)
+
+
+PROBLEMA 4: Los mensajes llegan pero no se muestran
+----------------------------------------------------
+
+CAUSA: El widget no se está reconstruyendo
+
+SOLUCIÓN: Verificar que se llama setState() y que mounted es true:
+
+if (!exists && mounted) {
+  setState(() {
+    _messages.add(newMessage);
+  });
+  debugPrint('✅ Mensaje agregado. Total: ${_messages.length}');
+}
+
+
+================================================================================
+5. CONFIGURACIÓN EN SUPABASE DASHBOARD
+================================================================================
+
+PASO 1: Habilitar Realtime
+---------------------------
+
+1. Ir a: https://app.supabase.com/project/TU_PROJECT_ID
+2. Navegar a: Database → Replication
+3. Buscar la tabla: chat_messages
+4. Hacer clic en el toggle para habilitar Realtime
+5. Repetir para: chat_sessions
+
+PASO 2: Verificar Políticas RLS
+--------------------------------
+
+Las políticas RLS deben permitir SELECT en tiempo real:
+
+-- Ver políticas actuales
+SELECT * FROM pg_policies 
+WHERE tablename IN ('chat_messages', 'chat_sessions');
+
+-- Si es necesario, crear política para realtime
+CREATE POLICY "realtime_chat_messages" 
+ON chat_messages FOR SELECT
+TO authenticated, anon
+USING (true);  -- Ajustar según tus necesidades de seguridad
+
+
+PASO 3: Configurar Realtime Settings (Opcional)
+------------------------------------------------
+
+1. Ir a: Settings → API
+2. Buscar: Realtime
+3. Configurar:
+   - Max connections: 100 (o según necesites)
+   - Presence timeout: 60s
+   - Broadcast timeout: 10s
+
+
+PASO 4: Verificar API Keys
+---------------------------
+
+Asegúrate de usar la clave correcta en tu app:
+
+En lib/env.dart o donde tengas las keys:
+
+class Environment {
+  static const String supabaseUrl = 'https://tu-proyecto.supabase.co';
+  static const String supabaseAnonKey = 'tu-anon-key-aqui';
+  
+  // Para desarrollo, puedes usar la service_role key (¡NUNCA en producción!)
+  // static const String supabaseServiceKey = 'tu-service-key';
+}
+
+
+================================================================================
+6. CÓDIGO DE EJEMPLO MEJORADO - VERSIÓN COMPLETA
+================================================================================
+
+Aquí está el código completo mejorado para chat_widget.dart:
+
+// En la clase _ChatWidgetState, agregar estas variables:
+
+RealtimeChannel? _channel;
+RealtimeChannel? _typingChannel;
+bool _adminIsTyping = false;
+Timer? _typingTimer;
+
+// Método mejorado de suscripción:
+
+void _subscribeToMessages() {
+  if (_sessionId == null) return;
+
+  debugPrint('📡 Suscribiéndose a mensajes para sesión: $_sessionId');
+
+  _channel = _supabase
+      .channel('chat_messages_$_sessionId')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'chat_messages',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'session_id',
+          value: _sessionId,
+        ),
+        callback: (payload) {
+          debugPrint('📨 Nuevo mensaje recibido: ${payload.newRecord}');
+          
+          final newMessage = payload.newRecord;
+          final messageId = newMessage['id'];
+          final exists = _messages.any((m) => m['id'] == messageId);
+          
+          if (!exists && mounted) {
+            setState(() {
+              _messages.add(newMessage);
+            });
+            
+            debugPrint('✅ Mensaje agregado. Total mensajes: ${_messages.length}');
+            _scrollToBottom();
+
+            // Si es del admin, marcar como leído y notificar
+            if (newMessage['sender_type'] == 'admin') {
+              _markMessagesAsRead();
+              _showNewMessageNotification(newMessage['message']);
+              
+              // Opcional: reproducir sonido
+              // _playNotificationSound();
+            }
+          } else {
+            debugPrint('⚠️ Mensaje duplicado o widget no montado');
+          }
+        },
+      )
+      .subscribe((status, error) {
+        debugPrint('📡 Estado de suscripción: $status');
+        
+        if (status == RealtimeSubscribeStatus.subscribed) {
+          debugPrint('✅ Suscrito exitosamente a mensajes en tiempo real');
+        } else if (status == RealtimeSubscribeStatus.closed) {
+          debugPrint('❌ Canal cerrado, intentando reconectar en 3s...');
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted && _sessionId != null) {
+              _subscribeToMessages();
+            }
+          });
+        } else if (status == RealtimeSubscribeStatus.channelError) {
+          debugPrint('❌ Error en el canal: $error');
+        } else if (status == RealtimeSubscribeStatus.timedOut) {
+          debugPrint('⏱️ Timeout en la suscripción');
+        }
+      });
+}
+
+// Método para mostrar notificación:
+
+void _showNewMessageNotification(String message) {
+  if (!mounted) return;
+  
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: const BoxDecoration(
+              color: Colors.white24,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.message,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Nuevo mensaje de Soporte',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  message.length > 50 
+                      ? '${message.substring(0, 50)}...' 
+                      : message,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      backgroundColor: const Color(0xFF00C853),
+      duration: const Duration(seconds: 4),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    ),
+  );
+}
+
+// No olvidar desuscribirse en dispose:
+
+@override
+void dispose() {
+  _messageController.dispose();
+  _scrollController.dispose();
+  _nameController.dispose();
+  _phoneController.dispose();
+  _emailController.dispose();
+  _channel?.unsubscribe();
+  _typingChannel?.unsubscribe();
+  _typingTimer?.cancel();
+  _animationController.dispose();
+  super.dispose();
+}
+
+
+================================================================================
+7. TESTING Y DEPURACIÓN
+================================================================================
+
+A. PRUEBA MANUAL
+----------------
+
+1. Abrir la aplicación web
+2. Iniciar un chat
+3. Abrir Supabase SQL Editor
+4. Ejecutar:
+
+INSERT INTO chat_messages (
+  session_id,
+  sender_type,
+  sender_name,
+  message
+) VALUES (
+  'TU_SESSION_ID_AQUI',
+  'admin',
+  'Soporte',
+  'Mensaje de prueba desde SQL'
+);
+
+5. Verificar que el mensaje aparece en la app inmediatamente
+
+
+B. LOGS DE DEPURACIÓN
+----------------------
+
+Buscar en la consola de Flutter:
+
+✅ Logs exitosos:
+- "📡 Suscribiéndose a mensajes para sesión: ..."
+- "✅ Suscrito exitosamente a mensajes en tiempo real"
+- "📨 Nuevo mensaje recibido: ..."
+- "✅ Mensaje agregado. Total mensajes: X"
+
+❌ Logs de error:
+- "❌ Canal cerrado..."
+- "❌ Error en el canal: ..."
+- "⚠️ Mensaje duplicado..."
+
+
+C. VERIFICAR CONEXIÓN WEBSOCKET
+--------------------------------
+
+En Chrome DevTools:
+1. Abrir DevTools (F12)
+2. Ir a Network tab
+3. Filtrar por "WS" (WebSocket)
+4. Deberías ver una conexión a: wss://tu-proyecto.supabase.co/realtime/v1/websocket
+5. Hacer clic en la conexión
+6. Ver los mensajes en la pestaña "Messages"
+
+
+D. COMANDO DE PRUEBA EN CONSOLA
+--------------------------------
+
+En la consola de Flutter, puedes ejecutar:
+
+// Verificar estado del canal
+debugPrint('Canal activo: ${_channel != null}');
+debugPrint('Session ID: $_sessionId');
+debugPrint('Total mensajes: ${_messages.length}');
+
+
+================================================================================
+8. CHECKLIST DE IMPLEMENTACIÓN
+================================================================================
+
+□ Realtime habilitado en Supabase para chat_messages
+□ Realtime habilitado en Supabase para chat_sessions
+□ Políticas RLS configuradas correctamente
+□ Método _subscribeToMessages() implementado
+□ Callback de mensajes funcionando
+□ Verificación de duplicados implementada
+□ setState() llamado correctamente
+□ _scrollToBottom() funcionando
+□ Logs de depuración agregados
+□ Manejo de reconexión implementado (opcional)
+□ Notificaciones visuales agregadas (opcional)
+□ Sonido de notificación agregado (opcional)
+□ Indicador de "escribiendo" agregado (opcional)
+□ Desuscripción en dispose()
+□ Pruebas manuales realizadas
+□ Verificación en producción
+
+
+================================================================================
+9. PREGUNTAS FRECUENTES
+================================================================================
+
+P: ¿Los mensajes se reciben si la app está en segundo plano?
+R: No, Realtime solo funciona mientras la app está activa. Para notificaciones
+   en segundo plano, necesitas implementar Push Notifications.
+
+P: ¿Cuánto tarda en llegar un mensaje?
+R: Típicamente menos de 100ms si la conexión es buena.
+
+P: ¿Hay límite de mensajes en tiempo real?
+R: Supabase tiene límites según tu plan. El plan gratuito permite 200 
+   conexiones simultáneas.
+
+P: ¿Funciona en todos los navegadores?
+R: Sí, todos los navegadores modernos soportan WebSockets.
+
+P: ¿Qué pasa si pierdo la conexión a internet?
+R: El canal se cierra y debes reconectar. Implementa el manejo de reconexión
+   mostrado en la sección 3.A.
+
+P: ¿Puedo recibir mensajes de múltiples sesiones?
+R: Sí, pero necesitas suscribirte a cada sesión por separado o usar un filtro
+   más amplio.
+
+
+================================================================================
+10. RECURSOS ADICIONALES
+================================================================================
+
+Documentación Oficial:
+- Supabase Realtime: https://supabase.com/docs/guides/realtime
+- Flutter Supabase: https://supabase.com/docs/reference/dart/introduction
+
+Ejemplos:
+- GitHub Supabase Flutter: https://github.com/supabase/supabase-flutter
+
+Soporte:
+- Discord de Supabase: https://discord.supabase.com
+- Stack Overflow: Tag [supabase]
+
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
+
+Para más información o dudas, contacta al equipo de desarrollo.
+Última actualización: 2026-01-18
