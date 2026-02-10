@@ -8,13 +8,17 @@ echo "<p>Intentando enviar un correo de prueba...</p>";
 // Datos de prueba
 $emailDestino = "cristiangomez0517@gmail.com"; // Tu email personal para probar
 $nombreDestino = "Cristian Gomez (Prueba)";
-$ticketId = "TEST-123456";
-$rutaPDF = "boleto_prueba.pdf"; // No importa si no existe, el helper maneja eso
+$emailDestino = "cristiangomez0517@gmail.com"; // Tu email personal para probar
+$nombreDestino = "Cristian Gomez (Prueba)";
+$boletos = "2, 3";
+$rutaPDF = "boleto_prueba.pdf";
+$telefono = "8098618985";
+$nombreSorteo = "4RUNNER Off Road 2026";
 
 // Crear un archivo dummy para probar adjunto (opcional)
 file_put_contents($rutaPDF, "Contenido de prueba para el boleto PDF");
 
-$resultado = enviarBoletoPorEmail($emailDestino, $nombreDestino, $ticketId, $rutaPDF);
+$resultado = enviarBoletoPorEmail($emailDestino, $nombreDestino, $boletos, $rutaPDF, $telefono, $nombreSorteo);
 
 if ($resultado) {
     echo "<h2 style='color: green;'>Envio Exitoso!</h2>";

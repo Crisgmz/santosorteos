@@ -36,7 +36,7 @@ class RafflesRepository {
     }
   }
 
-  Future<List<Sorteo>> fetchActiveRaffles() async {
+  Future<List<Sorteo>> fetchAllRaffles() async {
     final response = await _client
         .from('sorteos')
         .select('''
@@ -47,8 +47,11 @@ class RafflesRepository {
       total_tickets,
       fecha_sorteo,
       imagen_url,
+      imagenes,
+      mostrar_numeros,
       promocion_cantidad_compra,
       promocion_cantidad_regalo,
+      estado,
       premios(
         id,
         posicion,
@@ -57,7 +60,7 @@ class RafflesRepository {
         imagen_url
       )
     ''')
-        .eq('estado', 'active')
+        // .eq('estado', 'active') // Eliminado para traer todos (activos y finalizados)
         .order('fecha_sorteo', ascending: true)
         .order('posicion', referencedTable: 'premios', ascending: true);
 
@@ -83,8 +86,11 @@ class RafflesRepository {
       total_tickets,
       fecha_sorteo,
       imagen_url,
+      imagenes,
+      mostrar_numeros,
       promocion_cantidad_compra,
       promocion_cantidad_regalo,
+      estado,
       premios(
         id,
         posicion,
@@ -98,7 +104,7 @@ class RafflesRepository {
         .maybeSingle();
 
     if (response == null) {
-      throw const PostgrestException(message: 'Sorteo no encontrado');
+      throw const PostgrestException(message: 'Evento no encontrado');
     }
 
     final sold = await _countSoldTickets(sorteoId);
@@ -113,7 +119,21 @@ class RafflesRepository {
         .eq('estado', 'sold')
         .count(CountOption.exact); // aquí está la magia
 
-    return response.count ?? 0;
+    return response.count;
+  }
+
+  Future<List<int>> fetchSoldTicketNumbers(String sorteoId) async {
+    final response = await _client
+        .from('boletos')
+        .select('numero')
+        .eq('sorteo_id', sorteoId)
+        .filter('estado', 'in', [
+          'sold',
+          'reserved',
+        ]); // Include both sold and reserved
+
+    final data = response as List<dynamic>;
+    return data.map((e) => (e['numero'] as int)).toList();
   }
 
   Future<List<int>> fetchNextAvailableNumbers(
@@ -135,6 +155,29 @@ class RafflesRepository {
 
     if (sorted.length <= quantity) return sorted;
     return sorted.take(quantity).toList();
+  }
+
+  Future<List<int>> fetchRandomAvailableNumbers(
+    String sorteoId,
+    int quantity,
+  ) async {
+    // Traemos un pool grande de boletos disponibles (ej. 2000)
+    // para asegurar aleatoriedad en la selección
+    final response = await _client
+        .from('boletos')
+        .select('numero')
+        .eq('sorteo_id', sorteoId)
+        .eq('estado', 'available')
+        .limit(100000);
+
+    final data = response as List<dynamic>;
+    var numbers = data.map((e) => (e['numero'] as int)).toList();
+
+    // Mezclar la lista localmente
+    numbers.shuffle();
+
+    if (numbers.length <= quantity) return numbers;
+    return numbers.take(quantity).toList();
   }
 
   Future<List<VerifiedTicket>> verifyTickets(
@@ -453,7 +496,7 @@ class RafflesRepository {
                   numero: n,
                   estado: 'reserved',
                   sorteoId: sId,
-                  sorteoTitulo: 'Sorteo',
+                  sorteoTitulo: 'Evento',
                   buyerNombre: map['buyer_nombre'],
                   buyerCedula: map['buyer_cedula'],
                   buyerTelefono: map['buyer_telefono'],
@@ -564,7 +607,10 @@ class RafflesRepository {
   Future<void> triggerEmailPhp({
     required String email,
     required String nombre,
-    required String ticketId,
+    required List<int> boletos,
+    String? comprobanteUrl,
+    String? telefono,
+    String? nombreSorteo,
   }) async {
     try {
       // AJUSTAR URL SI ES NECESARIO
@@ -572,13 +618,20 @@ class RafflesRepository {
 
       print('🚀 Disparando email PHP a $url para $email...');
 
+      // Convertir lista de enteros a string separado por comas: "2, 3, 4"
+      final boletosStr = boletos.join(', ');
+
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'email': email,
           'nombre': nombre,
-          'ticket_id': ticketId,
+          'boletos': boletosStr, // Campo nuevo 'boletos'
+          'ticket_id': boletosStr, // Backwards compatibility
+          'telefono': telefono ?? '',
+          'nombre_sorteo': nombreSorteo ?? 'Evento Multisorteos',
+          if (comprobanteUrl != null) 'comprobante_url': comprobanteUrl,
         }),
       );
 

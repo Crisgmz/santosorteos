@@ -1,9 +1,22 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+
+import 'ticket_image_saver_stub.dart'
+    if (dart.library.html) 'ticket_image_saver_web.dart'
+    if (dart.library.io) 'ticket_image_saver_io.dart'
+    as ticket_saver;
 
 import 'MultisorteosPage.dart';
 import 'data/models.dart';
@@ -21,6 +34,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
   final _repo = RafflesRepository();
   late Future<Sorteo> _sorteoFuture;
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _verificadorSectionKey = GlobalKey();
 
   final _nombreCtrl = TextEditingController();
   final _apellidoCtrl = TextEditingController();
@@ -34,6 +48,24 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
   String? _imageFileName;
   Uint8List? _imageBytes;
   Map<String, String>? _selectedBank;
+
+  // Verificador de boletos
+  final _verificadorCtrl = TextEditingController();
+  bool _verificando = false;
+  String? _verificadorMsg;
+  bool? _verificadorOk;
+  List<VerifiedTicket> _tickets = [];
+  bool _busquedaNumeroExacta = false;
+  final Map<String, GlobalKey> _ticketKeys = {};
+
+  // Image gallery state
+  int _currentImageIndex = 0;
+  Timer? _autoScrollTimer;
+
+  // Ticket selection state
+  final Set<int> _selectedTickets = {};
+  final Set<int> _soldTicketNumbers = {};
+  int _ticketsToShow = 100; // Show 100 tickets at a time
 
   // Color primario unificado (mismo azul)
   // Color primario unificado alineado con MultisorteosPage
@@ -85,16 +117,33 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
   void initState() {
     super.initState();
     _sorteoFuture = _repo.fetchRaffleDetail(widget.initialSorteo.id);
+    _loadSoldTickets();
+  }
+
+  Future<void> _loadSoldTickets() async {
+    try {
+      final soldNumbers = await _repo.fetchSoldTicketNumbers(
+        widget.initialSorteo.id,
+      );
+      setState(() {
+        _soldTicketNumbers.clear();
+        _soldTicketNumbers.addAll(soldNumbers);
+      });
+    } catch (e) {
+      print('Error loading sold tickets: $e');
+    }
   }
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _nombreCtrl.dispose();
     _apellidoCtrl.dispose();
     _cedulaCtrl.dispose();
     _telefonoCtrl.dispose();
     _emailCtrl.dispose();
-    _scrollController.dispose();
+    _verificadorCtrl.dispose();
+    _autoScrollTimer?.cancel(); // Cancel the timer
     super.dispose();
   }
 
@@ -159,7 +208,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
       final double totalAmount = sorteo.precioTicket * paidTickets;
       final int freeTickets = _cantidad - paidTickets;
 
-      await _repo.saveReservationProof(
+      final publicUrl = await _repo.saveReservationProof(
         orderId: orderId,
         sorteoId: sorteo.id,
         buyerNombre: buyerName,
@@ -173,12 +222,14 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
         email: buyerEmail,
       );
 
-      // Disparar envío de correo al script PHP (si hay email)
       if (buyerEmail != null) {
         _repo.triggerEmailPhp(
           email: buyerEmail,
           nombre: buyerName,
-          ticketId: "Orden-$orderId",
+          boletos: reservados,
+          comprobanteUrl: publicUrl,
+          telefono: buyerPhone,
+          nombreSorteo: sorteo.titulo,
         );
       }
 
@@ -221,7 +272,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
       _goToHome(search: buyerPhone);
 
       setState(() {
-        _feedback = 'Boletos reservados! Nuestro equipo esta confirmando.';
+        _feedback = 'Boletos reservados! Nuestro equipo está confirmando.';
       });
     } catch (e) {
       setState(() {
@@ -265,7 +316,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Su ticket ha sido reservado, nuestro equipo esta confirmando.',
+                'Su ticket ha sido reservado, nuestro equipo está confirmando.',
                 style: TextStyle(fontSize: 16),
               ),
               const SizedBox(height: 16),
@@ -479,44 +530,6 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                               ),
                             )
                           else ...[
-                            // Selector de cantidad
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(20),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.grey.shade200),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.04),
-                                    blurRadius: 12,
-                                    offset: const Offset(0, 6),
-                                  ),
-                                ],
-                              ),
-                              child: Column(
-                                children: [
-                                  const Text(
-                                    'Selecciona la Cantidad de Boletos',
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.w800,
-                                      fontFamily: 'Roboto',
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  _counter(
-                                    value: _cantidad,
-                                    onChanged: (v) =>
-                                        setState(() => _cantidad = v),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  const SizedBox(height: 8),
-                                  _buildPriceDisplay(sorteo, currency),
-                                ],
-                              ),
-                            ),
                             const SizedBox(height: 16),
 
                             // Formulario de datos personales
@@ -851,6 +864,9 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                               ),
                             ],
                           ],
+                          const SizedBox(height: 40),
+                          _buildVerificador(sorteo),
+                          const SizedBox(height: 60),
                         ],
                       ),
                     ),
@@ -914,6 +930,15 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                               onPressed: _goHome,
                               tooltip: 'Inicio',
                             ),
+                            IconButton(
+                              icon: Icon(
+                                Icons.verified,
+                                color: primaryColor,
+                                size: 28,
+                              ),
+                              onPressed: _scrollToVerificador,
+                              tooltip: 'Verificador',
+                            ),
                           ],
                         )
                       else
@@ -922,6 +947,7 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
                           child: Row(
                             children: [
                               _menuItem("Inicio", _goHome),
+                              _menuItem("Verificador", _scrollToVerificador),
                               _menuItem("Contacto", _goHome),
                             ],
                           ),
@@ -956,6 +982,17 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
 
   void _goHome() {
     Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  void _scrollToVerificador() {
+    final context = _verificadorSectionKey.currentContext;
+    if (context == null) return;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeInOutCubic,
+      alignment: 0.05,
+    );
   }
 
   Widget _counter({required int value, required ValueChanged<int> onChanged}) {
@@ -1088,352 +1125,1347 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
     );
   }
 
-  Widget _placeholder() {
-    return Container(
-      height: 260,
-      color: Colors.grey.shade200,
-      child: const Center(
-        child: Icon(Icons.image_not_supported_outlined, size: 40),
-      ),
-    );
-  }
-
   Widget _buildHeroSection(
     Sorteo sorteo,
     double percent,
     NumberFormat currency,
   ) {
-    return SizedBox(
-      width: double.infinity,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isMobile = constraints.maxWidth < 900;
-          final isFinished =
-              sorteo.fechaSorteo != null &&
-              sorteo.fechaSorteo!.isBefore(DateTime.now());
+    // Prepare image list from sorteo.imagenes
+    final imageList = sorteo.imagenes
+        .where((img) => img.trim().isNotEmpty)
+        .toList();
+    final hasMultipleImages = imageList.length > 1;
 
-          // 🖼️ Columna Izquierda: Imagen + Badges
-          final imageWidget = Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Colors.blue.shade50, Colors.white],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.1),
-                  blurRadius: 15,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-            ),
-            child: Column(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    children: [
-                      AspectRatio(
-                        aspectRatio: 1, // Cuadrado
-                        child: sorteo.imagenUrl != null
-                            ? CachedNetworkImage(
-                                imageUrl: sorteo.imagenUrl!,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => _placeholder(),
-                                errorWidget: (context, url, error) =>
-                                    _placeholder(),
-                              )
-                            : _placeholder(),
-                      ),
-                      if (sorteo.hasPromo)
-                        Positioned(
-                          top: 10,
-                          left: 10,
-                          child: _promotionBadge(sorteo),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [
-                    _trustBadge(Icons.verified_user, "100% Seguro"),
-                    _trustBadge(Icons.local_shipping, "Entrega Garantizada"),
-                    _trustBadge(Icons.star, "Verificado"),
-                  ],
-                ),
-              ],
-            ),
-          );
+    // Ensure current index is valid
+    if (_currentImageIndex >= imageList.length && imageList.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _currentImageIndex = 0;
+          });
+        }
+      });
+    }
 
-          // 📝 Columna Derecha: Info
-          final infoWidget = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Badge de Estado
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: isFinished
-                      ? Colors.red.shade100
-                      : Colors.green.shade100,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isFinished ? Colors.red : Colors.green,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isFinished ? Icons.error_outline : Icons.check_circle,
-                      size: 16,
-                      color: isFinished ? Colors.red : Colors.green[700],
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      isFinished ? "SORTEO FINALIZADO" : "SORTEO ACTIVO",
-                      style: TextStyle(
-                        color: isFinished ? Colors.red : Colors.green[800],
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
+    final isFinished =
+        sorteo.fechaSorteo != null &&
+        sorteo.fechaSorteo!.isBefore(DateTime.now());
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 900;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Row 1: Gallery + Title/Description
+            if (isMobile) ...[
+              // Mobile: Stack vertically
+              _buildImageGalery(
+                sorteo,
+                imageList,
+                hasMultipleImages,
+                isFinished,
               ),
               const SizedBox(height: 16),
-              Text(
-                sorteo.titulo,
-                style: const TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF111827),
-                  height: 1.1,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                sorteo.descripcion ?? '',
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 16,
-                  height: 1.5,
-                ),
-              ),
+              // Info cards below gallery (mobile)
+              _buildInfoCards(sorteo, currency),
               const SizedBox(height: 24),
-
-              // Grid Informativo
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _infoItem(
-                        "💰 Precio por boleto",
-                        currency.format(sorteo.precioTicket),
-                        isPrimary: true,
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey.shade300,
-                    ),
-                    Expanded(
-                      child: _infoItem(
-                        "📅 Fecha del sorteo",
-                        sorteo.fechaSorteo != null
-                            ? DateFormat(
-                                'dd MMM yyyy',
-                                'es',
-                              ).format(sorteo.fechaSorteo!)
-                            : "Al vender el 100%",
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-              // Barra de progreso
-              if (!isFinished)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              _buildTitleDescriptionSection(sorteo, isFinished),
+            ] else
+              // Desktop: Side by side
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Left: Gallery + Info Cards
+                  Expanded(
+                    flex: 5,
+                    child: Column(
                       children: [
-                        Text(
-                          "Progreso de venta",
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade700,
-                          ),
+                        _buildImageGalery(
+                          sorteo,
+                          imageList,
+                          hasMultipleImages,
+                          isFinished,
                         ),
-                        Text(
-                          "${(percent * 100).toStringAsFixed(0)}%",
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            color: kPrimaryColor,
-                          ),
-                        ),
+                        const SizedBox(height: 16),
+                        _buildInfoCards(sorteo, currency),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: LinearProgressIndicator(
-                        value: percent,
-                        minHeight: 12,
-                        backgroundColor: Colors.grey.shade200,
-                        // Glow effect simulated by color
-                        color: percent > 0.7 ? kGoldColor : kPrimaryColor,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      "Boletos limitados, ¡no te quedes sin el tuyo!",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 32),
+                  // Right: Title + Description
+                  Expanded(
+                    flex: 5,
+                    child: _buildTitleDescriptionSection(sorteo, isFinished),
+                  ),
+                ],
+              ),
 
+            const SizedBox(height: 32),
+
+            // Progress bar
+            if (!isFinished) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Progreso de venta',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  Text(
+                    '${(percent * 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: kPrimaryColor,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(
+                  value: percent,
+                  minHeight: 10,
+                  backgroundColor: Colors.grey.shade200,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    percent > 0.7 ? kGoldColor : kPrimaryColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Boletos limitados, no te quedes sin el tuyo.',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
               const SizedBox(height: 32),
-              // Lista de Premios
-              Container(
-                decoration: BoxDecoration(
-                  color: kGoldColor.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: kGoldColor.withValues(alpha: 0.3)),
-                ),
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.emoji_events, color: kGoldColor),
-                        const SizedBox(width: 8),
-                        const Text(
-                          "Premios del Sorteo",
+            ],
+
+            // Prizes section (separate card)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: kGoldColor.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: kGoldColor.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.emoji_events,
+                        color: kGoldColor,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '🏆 Premios:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                          color: Color(0xFFB8860B),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (sorteo.premios.isEmpty)
+                    const Text(
+                      'Premios espectaculares',
+                      style: TextStyle(color: Colors.black54),
+                    ),
+                  ...sorteo.premios.map(
+                    (p) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12.0),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _getPrizeEmoji(p.posicion),
+                            style: const TextStyle(fontSize: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _getPrizeLabel(p.posicion),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey.shade600,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '👉 ${p.titulo}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Quantity selector section FIRST
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.04),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // Empty spacer for balance
+                      const SizedBox(width: 120),
+                      // Centered text
+                      const Expanded(
+                        child: Text(
+                          'Selecciona la Cantidad de Boletos',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                            color: Color(0xFFB8860B),
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            fontFamily: 'Roboto',
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    if (sorteo.premios.isEmpty)
-                      const Text(
-                        "Premios espectaculares",
-                        style: TextStyle(color: Colors.black54),
                       ),
-                    ...sorteo.premios.map(
-                      (p) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: kGoldColor),
-                              ),
-                              child: Text(
-                                "${p.posicion}",
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                      // Random selection button (or spacer if not showing numbers)
+                      if (sorteo.mostrarNumeros)
+                        OutlinedButton.icon(
+                          onPressed: _cantidad > 0
+                              ? () => _selectRandomTickets(sorteo)
+                              : null,
+                          icon: const Icon(Icons.casino, size: 18),
+                          label: const Text('Elegir al azar'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: kPrimaryColor,
+                            side: BorderSide(
+                              color: kPrimaryColor.withOpacity(0.5),
                             ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                p.titulo,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.black87,
-                                ),
-                              ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        )
+                      else
+                        const SizedBox(width: 120),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _counter(
+                    value: _cantidad,
+                    onChanged: (v) => setState(() => _cantidad = v),
+                  ),
+                  const SizedBox(height: 8),
+                  const SizedBox(height: 8),
+                  _buildPriceDisplay(sorteo, currency),
+                ],
               ),
-            ],
-          );
+            ),
 
-          if (isMobile) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [imageWidget, const SizedBox(height: 32), infoWidget],
-            );
-          }
-
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 2, child: imageWidget),
-              const SizedBox(width: 40),
-              Expanded(flex: 3, child: infoWidget),
+            // Ticket selection grid BELOW (only if mostrarNumeros is true)
+            if (sorteo.mostrarNumeros) ...[
+              const SizedBox(height: 24),
+              _buildTicketSelectionGrid(sorteo),
             ],
-          );
-        },
-      ),
+          ],
+        );
+      },
     );
   }
 
-  Widget _trustBadge(IconData icon, String text) {
+  // Info cards widget (Price and Date)
+  Widget _buildInfoCards(Sorteo sorteo, NumberFormat currency) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
           BoxShadow(
-            color: Colors.black12,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: Colors.green),
-          const SizedBox(width: 4),
+          Expanded(
+            child: _infoItem(
+              '💰 Precio por boleto',
+              currency.format(sorteo.precioTicket),
+              isPrimary: true,
+            ),
+          ),
+          Container(
+            width: 1,
+            height: 40,
+            color: Colors.grey.shade300,
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+          ),
+          Expanded(
+            child: _infoItem(
+              '📅 Fecha del evento',
+              sorteo.fechaSorteo != null
+                  ? DateFormat('dd MMM yyyy', 'es').format(sorteo.fechaSorteo!)
+                  : 'Al vender el 100%',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Title and Description section
+  Widget _buildTitleDescriptionSection(Sorteo sorteo, bool isFinished) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Status badge
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: isFinished ? Colors.red.shade50 : Colors.green.shade50,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isFinished ? Colors.red.shade300 : Colors.green.shade300,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isFinished ? Icons.cancel : Icons.check_circle,
+                size: 18,
+                color: isFinished ? Colors.red.shade700 : Colors.green.shade700,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isFinished ? 'EVENTO FINALIZADO' : 'EVENTO ACTIVO',
+                style: TextStyle(
+                  color: isFinished
+                      ? Colors.red.shade700
+                      : Colors.green.shade700,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Title
+        Text(
+          sorteo.titulo,
+          style: const TextStyle(
+            fontSize: 40,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFF0F172A),
+            height: 1.1,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // Description card
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.description, color: kPrimaryColor, size: 22),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Descripcion',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (sorteo.descripcion != null && sorteo.descripcion!.isNotEmpty)
+                Text(
+                  sorteo.descripcion!,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.grey.shade700,
+                    height: 1.6,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _getPrizeEmoji(int position) {
+    switch (position) {
+      case 1:
+        return '🥇';
+      case 2:
+        return '🥈';
+      case 3:
+        return '🥉';
+      default:
+        return '🎁';
+    }
+  }
+
+  String _getPrizeLabel(int position) {
+    switch (position) {
+      case 1:
+        return 'Primer Premio:';
+      case 2:
+        return 'Segundo Premio:';
+      case 3:
+        return 'Tercer Premio:';
+      default:
+        return 'Premio ${position}:';
+    }
+  }
+
+  // Image gallery with thumbnails
+  Widget _buildImageGalery(
+    Sorteo sorteo,
+    List<String> imageList,
+    bool hasMultipleImages,
+    bool isFinished,
+  ) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: kGoldColor.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(width: 3, color: kGoldColor),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          padding: const EdgeInsets.all(4),
+          child: Column(
+            children: [
+              // Main image
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: AspectRatio(
+                  aspectRatio: 1.2,
+                  child: Stack(
+                    children: [
+                      // Image carousel
+                      if (imageList.isNotEmpty)
+                        GestureDetector(
+                          onHorizontalDragEnd: !hasMultipleImages
+                              ? null
+                              : (details) {
+                                  if (details.primaryVelocity! > 0) {
+                                    setState(() {
+                                      _currentImageIndex =
+                                          (_currentImageIndex -
+                                              1 +
+                                              imageList.length) %
+                                          imageList.length;
+                                    });
+                                  } else if (details.primaryVelocity! < 0) {
+                                    setState(() {
+                                      _currentImageIndex =
+                                          (_currentImageIndex + 1) %
+                                          imageList.length;
+                                    });
+                                  }
+                                },
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 400),
+                            child: CachedNetworkImage(
+                              key: ValueKey<String>(
+                                'img_${imageList[_currentImageIndex]}',
+                              ),
+                              imageUrl: imageList[_currentImageIndex],
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              placeholder: (context, url) => Container(
+                                color: Colors.grey.shade800,
+                                child: const Center(
+                                  child: CircularProgressIndicator(
+                                    color: kGoldColor,
+                                  ),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => Container(
+                                color: Colors.grey.shade800,
+                                child: Icon(
+                                  Icons.broken_image,
+                                  size: 60,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          color: Colors.grey.shade800,
+                          child: const Center(
+                            child: Icon(
+                              Icons.image_not_supported,
+                              size: 60,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+
+                      // Promotion badge
+                      if (sorteo.hasPromo)
+                        Positioned(
+                          top: 12,
+                          left: 12,
+                          child: _promotionBadge(sorteo),
+                        ),
+
+                      // Navigation arrows
+                      if (hasMultipleImages) ...[
+                        Positioned(
+                          left: 12,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _currentImageIndex =
+                                        (_currentImageIndex -
+                                            1 +
+                                            imageList.length) %
+                                        imageList.length;
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.chevron_left,
+                                    color: Colors.white,
+                                    size: 28,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 12,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  setState(() {
+                                    _currentImageIndex =
+                                        (_currentImageIndex + 1) %
+                                        imageList.length;
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.6),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.chevron_right,
+                                    color: Colors.white,
+                                    size: 28,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Counter indicator
+                        Positioned(
+                          bottom: 12,
+                          right: 12,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.7),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: kGoldColor, width: 1),
+                            ),
+                            child: Text(
+                              '${_currentImageIndex + 1}/${imageList.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+
+              // Thumbnails
+              if (hasMultipleImages) ...[
+                const SizedBox(height: 8),
+                Container(
+                  height: 80,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: imageList.length,
+                    itemBuilder: (context, index) {
+                      final isSelected = index == _currentImageIndex;
+                      return GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _currentImageIndex = index;
+                          });
+                        },
+                        child: Container(
+                          width: 80,
+                          margin: const EdgeInsets.only(right: 8),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected
+                                  ? kGoldColor
+                                  : Colors.grey.shade600,
+                              width: isSelected ? 3 : 1.5,
+                            ),
+                            boxShadow: isSelected
+                                ? [
+                                    BoxShadow(
+                                      color: kGoldColor.withOpacity(0.5),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ]
+                                : [],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: CachedNetworkImage(
+                              imageUrl: imageList[index],
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                color: Colors.grey.shade800,
+                                child: const Center(
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: kGoldColor,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => Container(
+                                color: Colors.grey.shade800,
+                                child: Icon(
+                                  Icons.broken_image,
+                                  size: 24,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  //  Event information section
+  Widget _buildEventInfo(
+    Sorteo sorteo,
+    double percent,
+    NumberFormat currency,
+    bool isFinished,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Status badge
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: isFinished ? Colors.red.shade50 : Colors.green.shade50,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isFinished ? Colors.red.shade300 : Colors.green.shade300,
+              width: 1.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isFinished ? Icons.cancel : Icons.check_circle,
+                size: 18,
+                color: isFinished ? Colors.red.shade700 : Colors.green.shade700,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isFinished ? 'Evento finalizado' : '● Evento activo',
+                style: TextStyle(
+                  color: isFinished
+                      ? Colors.red.shade700
+                      : Colors.green.shade700,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Title
+        Text(
+          sorteo.titulo,
+          style: const TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFF0F172A),
+            height: 1.2,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Description
+        if (sorteo.descripcion != null && sorteo.descripcion!.isNotEmpty)
           Text(
-            text,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
+            sorteo.descripcion!,
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade700,
+              height: 1.6,
+            ),
+          ),
+        const SizedBox(height: 24),
+
+        // Info cards grid
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _infoCard(
+              icon: Icons.calendar_today,
+              label: 'Fecha',
+              value: sorteo.fechaSorteo != null
+                  ? DateFormat(
+                      'EEEE, dd \'De\'\nMMM \'De\' yyyy',
+                      'es',
+                    ).format(sorteo.fechaSorteo!)
+                  : 'Al vender\nel 100%',
+            ),
+            _infoCard(
+              icon: Icons.access_time,
+              label: 'Hora',
+              value: sorteo.fechaSorteo != null
+                  ? DateFormat(
+                      'HH:mm \'Hrs\'',
+                      'es',
+                    ).format(sorteo.fechaSorteo!)
+                  : 'TBD',
+            ),
+            _infoCard(
+              icon: Icons.confirmation_number,
+              label: 'Disponibles',
+              value:
+                  '${sorteo.totalTickets - sorteo.soldTickets} De ${sorteo.totalTickets}',
+            ),
+            _infoCard(
+              icon: Icons.people,
+              label: 'Participantes',
+              value: '${sorteo.soldTickets}',
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+
+        // Progress bar
+        if (!isFinished) ...[
+          Text(
+            'Progreso de venta',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: LinearProgressIndicator(
+                    value: percent,
+                    minHeight: 10,
+                    backgroundColor: Colors.grey.shade200,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      percent > 0.7 ? kGoldColor : kPrimaryColor,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${(percent * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: kPrimaryColor,
+                ),
+              ),
+            ],
+          ),
+        ],
+
+        // Premios section
+        const SizedBox(height: 32),
+        Container(
+          decoration: BoxDecoration(
+            color: kGoldColor.withOpacity(0.05),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kGoldColor.withOpacity(0.3)),
+          ),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.emoji_events, color: kGoldColor),
+                  const SizedBox(width: 8),
+                  const Text(
+                    "Premios del Evento",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                      color: Color(0xFFB8860B),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (sorteo.premios.isEmpty)
+                const Text(
+                  "Premios espectaculares",
+                  style: TextStyle(color: Colors.black54),
+                ),
+              ...sorteo.premios.map(
+                (p) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: kGoldColor),
+                        ),
+                        child: Text(
+                          "${p.posicion}",
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          p.titulo,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Purchase panel (right column)
+  Widget _buildPurchasePanel(
+    Sorteo sorteo,
+    NumberFormat currency,
+    double percent,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade200, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Comprar boletos',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Quantity selector
+          const Text(
+            'Cantidad',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
               color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _counter(
+            value: _cantidad,
+            onChanged: (v) => setState(() => _cantidad = v),
+          ),
+          const SizedBox(height: 24),
+
+          // Total a pagar
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Total a pagar',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              Text(
+                currency.format(
+                  sorteo.precioTicket *
+                      _calculatePaidTickets(sorteo, _cantidad),
+                ),
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ],
+          ),
+
+          if (sorteo.hasPromo) ...[
+            const SizedBox(height: 12),
+            _promotionBadge(sorteo),
+          ],
+
+          const SizedBox(height: 24),
+
+          // CTA Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _canConfirm() && !_loading
+                  ? () => _onConfirmar(sorteo)
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green.shade500,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+                shadowColor: Colors.transparent,
+              ),
+              child: Text(
+                _loading ? 'PROCESANDO...' : 'Participar ahora',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Trust badge
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.verified_user, size: 16, color: Colors.grey.shade600),
+              const SizedBox(width: 6),
+              Text(
+                'Compra 100% segura y verificable',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Ticket selection grid
+  Widget _buildTicketSelectionGrid(Sorteo sorteo) {
+    // Get only available tickets (not sold)
+    final availableTickets = List<int>.generate(
+      sorteo.totalTickets,
+      (index) => index + 1,
+    ).where((num) => !_soldTicketNumbers.contains(num)).toList();
+
+    // Tickets to display (limited by _ticketsToShow)
+    final ticketsToDisplay = availableTickets.take(_ticketsToShow).toList();
+    final hasMore = availableTickets.length > _ticketsToShow;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.touch_app, color: kPrimaryColor, size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'Selecciona tus boletos',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              if (_selectedTickets.isNotEmpty)
+                TextButton.icon(
+                  onPressed: () => setState(() => _selectedTickets.clear()),
+                  icon: const Icon(Icons.clear_all, size: 16),
+                  label: const Text('Limpiar'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _selectedTickets.isEmpty
+                ? 'Selecciona ${_cantidad} boleto${_cantidad != 1 ? 's' : ''} · ${availableTickets.length} disponibles'
+                : 'Seleccionados: ${_selectedTickets.length} de $_cantidad · ${availableTickets.length} disponibles',
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+          ),
+
+          // SELECTED TICKETS FIRST (at the top)
+          if (_selectedTickets.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: kPrimaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kPrimaryColor.withOpacity(0.3)),
+              ),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _selectedTickets.map((num) {
+                  return Chip(
+                    label: Text(
+                      num.toString().padLeft(3, '0'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    backgroundColor: kPrimaryColor,
+                    labelStyle: const TextStyle(color: Colors.white),
+                    deleteIconColor: Colors.white,
+                    onDeleted: () =>
+                        setState(() => _selectedTickets.remove(num)),
+                    visualDensity: VisualDensity.compact,
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 16),
+
+          // GRID BELOW selected tickets
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final crossAxisCount = (constraints.maxWidth / 60).floor().clamp(
+                6,
+                15,
+              );
+
+              return GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  crossAxisSpacing: 8,
+                  mainAxisSpacing: 8,
+                  childAspectRatio: 1,
+                ),
+                itemCount: ticketsToDisplay.length,
+                itemBuilder: (context, index) {
+                  final ticketNumber = ticketsToDisplay[index];
+                  final isSelected = _selectedTickets.contains(ticketNumber);
+
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        if (isSelected) {
+                          _selectedTickets.remove(ticketNumber);
+                        } else {
+                          if (_selectedTickets.length < _cantidad) {
+                            _selectedTickets.add(ticketNumber);
+                          }
+                        }
+                      });
+                    },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isSelected ? kPrimaryColor : Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isSelected
+                              ? kPrimaryColor
+                              : Colors.grey.shade300,
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          ticketNumber.toString().padLeft(3, '0'),
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : Colors.black87,
+                            fontWeight: isSelected
+                                ? FontWeight.w900
+                                : FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+
+          // Load more button
+          if (hasMore) ...[
+            const SizedBox(height: 16),
+            Center(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _ticketsToShow += 100;
+                  });
+                },
+                icon: const Icon(Icons.expand_more, size: 20),
+                label: Text(
+                  'Cargar más (${availableTickets.length - _ticketsToShow} restantes)',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kPrimaryColor,
+                  side: BorderSide(color: kPrimaryColor.withOpacity(0.5)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Select random tickets
+  void _selectRandomTickets(Sorteo sorteo) {
+    setState(() {
+      _selectedTickets.clear();
+
+      // Get available tickets (not sold)
+      final availableTickets = List<int>.generate(
+        sorteo.totalTickets,
+        (index) => index + 1,
+      ).where((num) => !_soldTicketNumbers.contains(num)).toList();
+
+      if (availableTickets.isEmpty) {
+        return;
+      }
+
+      // Shuffle and take the required quantity
+      availableTickets.shuffle();
+      final ticketsToSelect = availableTickets.take(_cantidad).toList();
+      _selectedTickets.addAll(ticketsToSelect);
+    });
+  }
+
+  // Info card widget
+
+  // Info card widget
+  Widget _infoCard({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      width: 145,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 24, color: kPrimaryColor),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF0F172A),
+              height: 1.2,
             ),
           ),
         ],
@@ -1761,4 +2793,560 @@ class _RaffleDetailPageState extends State<RaffleDetailPage> {
       ),
     );
   }
+
+  // =====================================================================
+  // VERIFICADOR PARA ESTE SORTEO
+  // =====================================================================
+  Widget _buildVerificador(Sorteo sorteo) {
+    return Container(
+      key: _verificadorSectionKey,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.grey.shade200),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                const Text(
+                  "VERIFICADOR DE BOLETOS",
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: kPrimaryColor,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  "Consulta el estado de tus boletos reservados para\n\"${sorteo.titulo}\"",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 14, color: Colors.black54),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: _verificadorCtrl,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _buscarBoleto(sorteo.id),
+                  decoration: InputDecoration(
+                    hintText: "Número de teléfono o #boleto",
+                    filled: true,
+                    fillColor: const Color(0xFFF1F5F9),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: const OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(12)),
+                      borderSide: BorderSide(color: kPrimaryColor, width: 2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _verificando
+                        ? null
+                        : () => _buscarBoleto(sorteo.id),
+                    icon: _verificando
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.search, color: Colors.white),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kGoldColor,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 4,
+                    ),
+                    label: Text(
+                      _verificando ? "BUSCANDO..." : "BUSCAR MIS BOLETOS",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                ),
+                if (_verificadorMsg != null) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _verificadorOk == true
+                            ? Icons.check_circle
+                            : Icons.error_outline,
+                        color: _verificadorOk == true
+                            ? Colors.green
+                            : Colors.red,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _verificadorMsg!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: _verificadorOk == true
+                                ? Colors.green.shade800
+                                : Colors.red.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (_tickets.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  _verificadorResultados(),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _buscarBoleto(String sorteoId) async {
+    final input = _verificadorCtrl.text.trim();
+    if (input.isEmpty) return;
+
+    final sanitized = input.replaceAll(RegExp(r'[^0-9]'), '');
+    final bool esNumeroCorto = sanitized.length < 5;
+
+    setState(() {
+      _verificando = true;
+      _verificadorMsg = null;
+      _verificadorOk = null;
+      _tickets = [];
+      _ticketKeys.clear();
+      _busquedaNumeroExacta = esNumeroCorto;
+    });
+
+    try {
+      final result = await _repo.verifyTickets(
+        input,
+        searchNumberExact: esNumeroCorto,
+        searchPhoneOnly: !esNumeroCorto,
+        sorteoId: sorteoId,
+      );
+
+      if (result.isEmpty) {
+        setState(() {
+          _verificadorOk = false;
+          _verificadorMsg =
+              "No encontramos boletos para este sorteo con ese dato.";
+        });
+      } else {
+        final keysMap = <String, GlobalKey>{};
+        for (final t in result) {
+          keysMap[_ticketKeyId(t)] = GlobalKey();
+        }
+
+        setState(() {
+          _verificadorOk = true;
+          _tickets = result;
+          _ticketKeys.addAll(keysMap);
+          _verificadorMsg =
+              "Encontramos ${result.length} boleto${result.length > 1 ? 's' : ''}.";
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _verificadorOk = false;
+        _verificadorMsg = "Error al verificar: $e";
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _verificando = false;
+        });
+      }
+    }
+  }
+
+  String _ticketKeyId(VerifiedTicket t) => "ticket_${t.sorteoId}_${t.numero}";
+
+  Widget _verificadorResultados() {
+    final first = _tickets.first;
+    final dateFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
+    final qrData =
+        'https://multisorteos.com/?ticket=${Uri.encodeComponent(_verificadorCtrl.text.trim())}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const SizedBox(height: 6),
+        if (!_busquedaNumeroExacta) ...[
+          Text(
+            first.buyerNombre ?? 'Comprador',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade300, width: 2),
+          ),
+          child: QrImageView(
+            data: qrData,
+            version: QrVersions.auto,
+            size: 140,
+            backgroundColor: Colors.white,
+            eyeStyle: const QrEyeStyle(
+              eyeShape: QrEyeShape.square,
+              color: Colors.black,
+            ),
+            dataModuleStyle: const QrDataModuleStyle(
+              dataModuleShape: QrDataModuleShape.square,
+              color: Colors.black,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          "Numeros en total: ${_tickets.length}",
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
+        const SizedBox(height: 20),
+        Column(
+          children: _tickets
+              .map(
+                (t) => Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Center(child: _ticketCard(t, dateFmt)),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
+  Widget _ticketCard(VerifiedTicket t, DateFormat dateFmt) {
+    final fecha = t.soldAt != null
+        ? dateFmt.format(t.soldAt!.toLocal())
+        : 'Reserva (Boleto por confirmar)';
+    final bool isReserved = t.estado.toLowerCase() == 'reserved';
+    final statusText = isReserved ? "Reservado" : "Pago verificado";
+    final statusColor = isReserved ? Colors.orange : Colors.green;
+    final statusIcon = isReserved
+        ? Icons.access_time_filled
+        : Icons.check_circle;
+    final bg = t.sorteoImagenUrl;
+
+    final key = _ticketKeys[_ticketKeyId(t)] ?? GlobalKey();
+    _ticketKeys.putIfAbsent(_ticketKeyId(t), () => key);
+
+    String maskPhone(String phone) {
+      if (phone.length <= 5) return phone;
+      final keepStart = phone.substring(0, 3);
+      final keepEnd = phone.substring(phone.length - 2);
+      final middle = "*" * (phone.length - 5);
+      return "$keepStart-$middle-$keepEnd";
+    }
+
+    String maskName(String name) {
+      final parts = name.split(" ");
+      if (parts.length <= 2) return "${parts.first} ****";
+      return "${parts[0]} ${parts[1]} **** ****";
+    }
+
+    final maskedName = t.buyerNombre != null
+        ? maskName(t.buyerNombre!)
+        : "Cliente";
+
+    final showFullData = !_busquedaNumeroExacta;
+    final displayName = showFullData
+        ? (t.buyerNombre ?? "Cliente")
+        : maskedName;
+    final displayPhone = showFullData
+        ? (t.buyerTelefono ?? "***")
+        : (t.buyerTelefono != null ? maskPhone(t.buyerTelefono!) : "***");
+
+    return RepaintBoundary(
+      key: key,
+      child: Container(
+        width: 260,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 10,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0A2B57),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
+                image: bg != null
+                    ? DecorationImage(
+                        image: CachedNetworkImageProvider(bg),
+                        fit: BoxFit.cover,
+                        colorFilter: ColorFilter.mode(
+                          Colors.black.withValues(alpha: 0.55),
+                          BlendMode.darken,
+                        ),
+                      )
+                    : null,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    t.sorteoTitulo,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(statusIcon, color: Colors.white, size: 18),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          statusText.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.person, color: Colors.white, size: 18),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          displayName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.phone_android,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        displayPhone,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.event, color: Colors.white, size: 18),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          fecha,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(
+                  bottom: Radius.circular(16),
+                ),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    "BOLETO",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    t.numero.toString().padLeft(4, '0'),
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _ticketActionButtons(t),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  Widget _ticketActionButtons(VerifiedTicket t) {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => _downloadTicket(t),
+            icon: const Icon(Icons.download, size: 18, color: Colors.white),
+            label: const Text(
+              "DESCARGAR",
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kPrimaryColor,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: () => _printTicket(t),
+            icon: const Icon(Icons.print, size: 18, color: Colors.white),
+            label: const Text(
+              "IMPRIMIR",
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kPrimaryColor.withValues(alpha: 0.9),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  Future<void> _downloadTicket(VerifiedTicket t) async {
+    final key = _ticketKeys[_ticketKeyId(t)];
+    if (key == null) return;
+    try {
+      final boundary =
+          key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return;
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData!.buffer.asUint8List();
+      await ticket_saver.saveTicketImage(bytes, "Ticket_${t.numero}.png");
+    } catch (e) {
+      debugPrint("Error downloading ticket: $e");
+    }
+  }
+
+  Future<void> _printTicket(VerifiedTicket t) async {
+    final key = _ticketKeys[_ticketKeyId(t)];
+    if (key == null) return;
+    try {
+      final boundary =
+          key.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) return;
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      final bytes = byteData!.buffer.asUint8List();
+
+      final pdf = pw.Document();
+      final pdfImage = pw.MemoryImage(bytes);
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) => pw.Center(child: pw.Image(pdfImage)),
+        ),
+      );
+      await Printing.layoutPdf(onLayout: (format) async => pdf.save());
+    } catch (e) {
+      debugPrint("Error printing ticket: $e");
+    }
+  }
 }
+

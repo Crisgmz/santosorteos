@@ -22,10 +22,27 @@ $record = $data['record'];
 
 $emailCliente = $record['buyer_email'] ?? null;
 $nombreCliente = $record['buyer_nombre'] ?? 'Cliente';
-$ticketId = $record['numero'] ?? $record['id']; // Usar número de boleto o ID interno
-$sorteoId = $record['sorteo_id'];
+// IMPORTANTE: 'numeros' puede venir como array o string.
+$rawBoletos = $record['numeros'] ?? $record['numero'] ?? $record['id'];
+if (is_array($rawBoletos)) {
+    $boletos = implode(', ', $rawBoletos);
+} else {
+    // Limpiar caracteres extraños si viene como string JSON "[1,2]"
+    $boletos = str_replace(['[', ']', '"'], '', $rawBoletos);
+}
+$sorteoId = $record['sorteo_id'] ?? 0;
 
-writeEmailLog("📦 Procesando orden para: $nombreCliente ($emailCliente) - Ticket: $ticketId");
+// Intentar obtener telefono
+$telefono = $record['buyer_telefono'] ?? $record['telefono'] ?? $record['celular'] ?? $record['phone'] ?? '';
+
+// Intentar obtener nombre del sorteo
+$nombreSorteo = $record['sorteo_nombre'] ?? $record['nombre_sorteo'] ?? 'Evento Multisorteos';
+
+// Intentar obtener montos y metodo de pago
+$montoTotal = $record['monto_total'] ?? '';
+$metodoPago = $record['banco'] ?? 'N/A';
+
+writeEmailLog("📦 Procesando orden para: $nombreCliente ($emailCliente) - Boletos: $boletos - Tel: $telefono - Monto: $montoTotal");
 
 if (!$emailCliente) {
     writeEmailLog("⚠️ La orden no tiene email asociado. Saltando envío.");
@@ -33,12 +50,10 @@ if (!$emailCliente) {
 }
 
 // 3. Definir la ruta del PDF
-// IMPORTANTE: Aquí asumo que tus PDFs ya existen o se generan con este nombre
-// Si no existen, el correo se enviará SIN adjunto.
-$rutaPDF = __DIR__ . "/boletos/boleto_" . $ticketId . ".pdf";
+$rutaPDF = __DIR__ . "/boletos/boleto_" . $boletos . ".pdf";
 
 // 4. Enviar el correo
-$resultado = enviarBoletoPorEmail($emailCliente, $nombreCliente, $ticketId, $rutaPDF);
+$resultado = enviarBoletoPorEmail($emailCliente, $nombreCliente, $boletos, $rutaPDF, $telefono, $nombreSorteo, $montoTotal, $metodoPago);
 
 if ($resultado) {
     echo "Correo enviado correctamente";

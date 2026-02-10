@@ -1,4 +1,5 @@
-﻿import 'dart:ui' as ui;
+﻿import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -10,7 +11,6 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:carousel_slider/carousel_slider.dart';
 
 import 'ticket_image_saver_stub.dart'
     if (dart.library.html) 'ticket_image_saver_web.dart'
@@ -19,8 +19,9 @@ import 'ticket_image_saver_stub.dart'
 
 import 'data/models.dart';
 import 'data/raffles_repository.dart';
-import 'raffle_detail_page.dart' hide SingleChildScrollView;
+import 'raffle_detail_page.dart';
 import 'chat_popup_widget.dart';
+import '_instagram_link_helper.dart';
 
 // =====================================================================
 // ESTILOS GLOBALES
@@ -79,6 +80,9 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
   bool? _verificadorOk;
   List<VerifiedTicket> _tickets = [];
   bool _busquedaNumeroExacta = false;
+  int _heroBannerIndex = 0;
+  int _heroBannerCount = 0;
+  Timer? _heroAutoSlideTimer;
 
   // Keys para capturar cada ticket como imagen
   final Map<String, GlobalKey> _ticketKeys = {};
@@ -112,7 +116,8 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
   @override
   void initState() {
     super.initState();
-    _rafflesFuture = _repo.fetchActiveRaffles();
+    _rafflesFuture = _repo.fetchAllRaffles();
+    _startHeroAutoSlide();
 
     if (widget.initialSearch != null && widget.initialSearch!.isNotEmpty) {
       _verificadorCtrl.text = widget.initialSearch!;
@@ -125,9 +130,20 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
 
   @override
   void dispose() {
+    _heroAutoSlideTimer?.cancel();
     _scrollController.dispose();
     _verificadorCtrl.dispose();
     super.dispose();
+  }
+
+  void _startHeroAutoSlide() {
+    _heroAutoSlideTimer?.cancel();
+    _heroAutoSlideTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!mounted || _heroBannerCount <= 1) return;
+      setState(() {
+        _heroBannerIndex = (_heroBannerIndex + 1) % _heroBannerCount;
+      });
+    });
   }
 
   // =====================================================================
@@ -376,7 +392,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                               () => _scrollToSection(acercaKey),
                             ),
                             _menuItem(
-                              "Sorteos Anteriores",
+                              "Eventos Anteriores",
                               () => _scrollToSection(ganadoresKey),
                             ),
                             _menuItem(
@@ -418,7 +434,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
   }
 
   // =====================================================================
-  // DRAWER (MENÚ LATERAL MÓVIL)
+// DRAWER (MENÚ LATERAL MÓVIL)
   // =====================================================================
   Widget _buildDrawer() {
     return Drawer(
@@ -490,7 +506,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                     ),
                     _drawerMenuItem(
                       icon: Icons.emoji_events_rounded,
-                      text: 'Sorteos Anteriores',
+                      text: 'Eventos Anteriores',
                       onTap: () {
                         Navigator.pop(context);
                         _scrollToSection(ganadoresKey);
@@ -592,471 +608,417 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
 
   // =====================================================================
   // INICIO (HERO)
-  // =====================================================================
   Widget _buildInicio() {
     return Container(
       key: inicioKey,
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 80),
-      color: Colors.white, // Fondo limpio blanco o muy claro
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1200),
-          child: LayoutBuilder(
+      color: Colors.white,
+      child: FutureBuilder<List<Sorteo>>(
+        future: _rafflesFuture,
+        builder: (context, snapshot) {
+          final sorteos = snapshot.data ?? const <Sorteo>[];
+          final bannerImages = <String>{
+            for (final s in sorteos)
+              for (final img in s.imagenes)
+                if (img.trim().isNotEmpty) img.trim(),
+          }.toList();
+
+          final hasImages = bannerImages.isNotEmpty;
+          _heroBannerCount = bannerImages.length;
+          final safeIndex = hasImages
+              ? _heroBannerIndex.clamp(0, bannerImages.length - 1)
+              : 0;
+
+          if (hasImages && safeIndex != _heroBannerIndex) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() {
+                  _heroBannerIndex = safeIndex;
+                });
+              }
+            });
+          }
+
+          return LayoutBuilder(
             builder: (context, constraints) {
-              final isNarrow = constraints.maxWidth < 900;
+              final width = constraints.maxWidth;
+              final isMobile = width < 600;
+              final isTablet = width >= 600 && width < 1024;
 
-              // --- COLUMNA IZQUIERDA: INFORMACIÓN ---
-              final infoColumn = Column(
-                crossAxisAlignment: isNarrow
-                    ? CrossAxisAlignment.center
-                    : CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Badge Superior
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+              final thumbnailRailHeight = hasImages
+                  ? (isMobile ? 70.0 : 90.0)
+                  : 0.0;
+
+              // Responsive height calculation
+              double calculatedHeight;
+              if (isMobile) {
+                calculatedHeight = 420.0;
+              } else if (isTablet) {
+                calculatedHeight = 500.0;
+              } else {
+                // Wider cinematic format for desktop to reduce height
+                calculatedHeight = (width * 7 / 18).clamp(450.0, 650.0);
+              }
+
+              final heroHeight = calculatedHeight + thumbnailRailHeight;
+
+              Widget heroTrustItem(IconData icon, String text, Color color) {
+                return Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isMobile ? 8 : 12,
+                    vertical: isMobile ? 4 : 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.1),
+                      width: 1,
                     ),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, color: color, size: isMobile ? 12 : 14),
+                      const SizedBox(width: 8),
+                      Text(
+                        text,
+                        style: TextStyle(
+                          fontSize: isMobile ? 10 : 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              final infoColumn = Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 20 : (isTablet ? 40 : 80),
+                  vertical: isMobile ? 30 : 50,
+                ),
+                child: Column(
+                  crossAxisAlignment: isMobile
+                      ? CrossAxisAlignment.center
+                      : CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    // Small Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: kPrimaryColor,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.verified, size: 14, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text(
+                            'PLATAFORMA CONFIABLE Y TRANSPARENTE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 10,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    const SizedBox(height: 16),
+                    // Main Title
+                    RichText(
+                      textAlign: isMobile ? TextAlign.center : TextAlign.start,
+                      text: TextSpan(
+                        style: TextStyle(
+                          fontSize: isMobile ? 30 : (isTablet ? 42 : 58),
+                          fontWeight: FontWeight.w900,
+                          height: 1.1,
+                          color: Colors.white,
+                          letterSpacing: -0.5,
+                        ),
+                        children: [
+                          const TextSpan(text: 'Participa en '),
+                          const TextSpan(
+                            text: 'Eventos\nOnline',
+                            style: TextStyle(color: Color(0xFF4BA3FF)),
+                          ),
+                          const TextSpan(text: ' y Gana\nPremios Increíbles'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Description
+                    SizedBox(
+                      width: isMobile
+                          ? double.infinity
+                          : (isTablet ? 500 : 650),
+                      child: Text(
+                        'La forma más emocionante, segura y transparente de ganar premios espectaculares. Compra tu boleto, participa en el evento y ¡conviértete en el próximo ganador!',
+                        textAlign: isMobile
+                            ? TextAlign.center
+                            : TextAlign.start,
+                        style: TextStyle(
+                          fontSize: isMobile ? 14 : 17,
+                          color: Colors.white.withValues(alpha: 0.8),
+                          height: 1.5,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    // Buttons
+                    Wrap(
+                      alignment: isMobile
+                          ? WrapAlignment.center
+                          : WrapAlignment.start,
+                      spacing: 16,
+                      runSpacing: 16,
                       children: [
-                        const Icon(
-                          Icons.card_giftcard,
-                          size: 16,
-                          color: Colors.orange,
+                        ElevatedButton(
+                          onPressed: () => _scrollToSection(sorteosKey),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: kPrimaryColor,
+                            foregroundColor: Colors.white,
+                            minimumSize: isMobile
+                                ? const Size(double.infinity, 54)
+                                : null,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isMobile ? 24 : 36,
+                              vertical: isMobile ? 16 : 22,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: const Text(
+                            'VER EVENTOS ACTIVOS',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          "PLATAFORMA CONFIABLE Y TRANSPARENTE",
-                          style: TextStyle(
-                            color: kPrimaryColor,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                            letterSpacing: 0.5,
+                        OutlinedButton(
+                          onPressed: () => _scrollToSection(acercaKey),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: const BorderSide(
+                              color: Colors.white,
+                              width: 1.5,
+                            ),
+                            minimumSize: isMobile
+                                ? const Size(double.infinity, 54)
+                                : null,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: isMobile ? 24 : 36,
+                              vertical: isMobile ? 16 : 22,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            'CÓMO FUNCIONA',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Titulo Principal
-                  RichText(
-                    textAlign: isNarrow ? TextAlign.center : TextAlign.start,
-                    text: TextSpan(
-                      style: TextStyle(
-                        fontSize: isNarrow ? 36 : 52,
-                        fontWeight: FontWeight.w900,
-                        height: 1.1,
-                        color: Colors.black87, // Standard dark text
-                        fontFamily:
-                            'Roboto', // Asegurar fuente default o custom
-                      ),
-                      children: const [
-                        TextSpan(text: "Participa en "),
-                        TextSpan(
-                          text: "Sorteos\nOnline",
-                          style: TextStyle(color: kPrimaryColor),
+                    const SizedBox(height: 40),
+                    // Trust Items
+                    Wrap(
+                      alignment: isMobile
+                          ? WrapAlignment.center
+                          : WrapAlignment.start,
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        heroTrustItem(
+                          Icons.verified_user,
+                          '100% SEGURO',
+                          Colors.greenAccent,
                         ),
-                        TextSpan(text: " y Gana\n"),
-                        TextSpan(text: "Premios Increíbles"),
+                        heroTrustItem(
+                          Icons.star,
+                          'TRANSPARENTE',
+                          Colors.blueAccent,
+                        ),
+                        heroTrustItem(
+                          Icons.emoji_events,
+                          '+50 GANADORES',
+                          kGoldLight,
+                        ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 18),
-
-                  // Descripción
-                  Text(
-                    "La forma más emocionante, segura y transparente de ganar premios espectaculares. Compra tu boleto, participa en el sorteo y ¡conviértete en el próximo ganador!",
-                    textAlign: isNarrow ? TextAlign.center : TextAlign.start,
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.blueGrey.shade700,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Botones
-                  Wrap(
-                    spacing: 16,
-                    runSpacing: 16,
-                    alignment: isNarrow
-                        ? WrapAlignment.center
-                        : WrapAlignment.start,
-                    children: [
-                      // Botón Sólido (Ver Sorteos)
-                      ElevatedButton.icon(
-                        onPressed: () => _scrollToSection(sorteosKey),
-                        icon: const Icon(Icons.confirmation_num, size: 20),
-                        label: const Text("VER SORTEOS ACTIVOS"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kPrimaryColor, // Azul fuerte
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 16,
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          elevation: 4,
-                          shadowColor: kPrimaryColor.withValues(alpha: 0.4),
-                        ),
-                      ),
-
-                      // Botón Outlined (Cómo funciona)
-                      OutlinedButton.icon(
-                        onPressed: () => _scrollToSection(acercaKey),
-                        icon: const Icon(Icons.play_circle_fill, size: 20),
-                        label: const Text("CÓMO FUNCIONA"),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: kPrimaryColor,
-                          side: const BorderSide(
-                            color: kPrimaryColor,
-                            width: 2,
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 16,
-                          ),
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 40),
-
-                  // Trust Indicators (Iconos abajo)
-                  Wrap(
-                    spacing: 24,
-                    runSpacing: 12,
-                    alignment: isNarrow
-                        ? WrapAlignment.center
-                        : WrapAlignment.start,
-                    children: [
-                      _trustItem(
-                        Icons.verified_user,
-                        "100% Seguro",
-                        Colors.green,
-                      ),
-                      _trustItem(Icons.star, "Transparente", Colors.blue),
-                      _trustItem(
-                        Icons.emoji_events,
-                        "+50 Ganadores",
-                        kGoldColor,
-                      ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               );
 
-              // --- COLUMNA DERECHA: IMAGEN / COMPOSICIÓN ---
-              // Simulamos el frame de la derecha con un Container azul claro y la imagen 'logo_completo.png'
-              // y algunos elementos flotantes para darle dinamismo.
-              final graphicComposition = Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  // Fondo azul claro redondeado
-                  Container(
-                    width: 450,
-                    height: 400,
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50, // Azul muy suave
-                      borderRadius: BorderRadius.circular(40),
-                      border: Border.all(color: Colors.blue.shade100, width: 2),
-                    ),
-                  ),
-
-                  // Imagen Principal (Usamos una imagen genérica o el logo si no hay assets de premios)
-                  // Como placeholder usaremos el logo_completo pero estilizado o una imagen de asset si hubiese.
-                  // Usaremos 'assets/imagenes/logo_completo.png' ya que sabemos que existe.
-                  // Carrousel de Sorteos Activos (Reemplaza Logo Estático)
-                  FutureBuilder<List<Sorteo>>(
-                    future: _rafflesFuture,
-                    builder: (context, snapshot) {
-                      final activeSorteos =
-                          snapshot.data
-                              ?.where(
-                                (s) =>
-                                    s.fechaSorteo == null ||
-                                    s.fechaSorteo!.isAfter(DateTime.now()),
-                              )
-                              .toList() ??
-                          [];
-
-                      if (snapshot.hasData && activeSorteos.isNotEmpty) {
-                        return Container(
-                          width: 380,
-                          height: 320,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.1),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
+              return SizedBox(
+                height: heroHeight,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Background Image Switcher
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 1000),
+                      child: hasImages
+                          ? CachedNetworkImage(
+                              key: ValueKey<String>(
+                                'hero_${bannerImages[safeIndex]}',
                               ),
+                              imageUrl: bannerImages[safeIndex],
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              placeholder: (context, url) =>
+                                  Container(color: Colors.black),
+                              errorWidget: (context, url, error) =>
+                                  Container(color: Colors.black),
+                            )
+                          : Image.asset(
+                              'assets/imagenes/logo_completo.png',
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                            ),
+                    ),
+
+                    // Gradients Overlays
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.75),
+                              Colors.black.withValues(alpha: 0.25),
+                              Colors.transparent,
                             ],
                           ),
-                          child: CarouselSlider(
-                            options: CarouselOptions(
-                              height: 320,
-                              viewportFraction: 1.0,
-                              autoPlay: true,
-                              autoPlayInterval: const Duration(seconds: 4),
-                              autoPlayAnimationDuration: const Duration(
-                                milliseconds: 800,
+                        ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.center,
+                            stops: const [0.0, 0.75],
+                            colors: [
+                              Colors.black.withValues(alpha: 0.98),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Main Content
+                    Positioned.fill(child: SafeArea(child: infoColumn)),
+
+                    // Thumbnails at the very bottom edge
+                    if (hasImages)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: isMobile ? 8 : 12,
+                        child: SizedBox(
+                          height: isMobile ? 60 : 80,
+                          child: Center(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
                               ),
-                              autoPlayCurve: Curves.fastOutSlowIn,
-                              enlargeCenterPage: true,
-                            ),
-                            items: activeSorteos.map((sorteo) {
-                              return Builder(
-                                builder: (BuildContext context) {
-                                  return GestureDetector(
-                                    onTap: () {
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => RaffleDetailPage(
-                                            initialSorteo: sorteo,
-                                          ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: List.generate(bannerImages.length, (
+                                  index,
+                                ) {
+                                  final selected = index == safeIndex;
+                                  final thumbWidth = isMobile
+                                      ? (selected ? 60.0 : 45.0)
+                                      : (selected ? 80.0 : 60.0);
+                                  final thumbHeight = isMobile
+                                      ? (selected ? 38.0 : 30.0)
+                                      : (selected ? 50.0 : 40.0);
+
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                    ),
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          _heroBannerIndex = index;
+                                        });
+                                      },
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 250,
                                         ),
-                                      );
-                                    },
-                                    child: Container(
-                                      width: 380,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(20),
-                                        color: Colors.white,
-                                      ),
-                                      child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(20),
-                                        child: Stack(
-                                          fit: StackFit.expand,
-                                          children: [
-                                            if (sorteo.imagenUrl != null)
-                                              CachedNetworkImage(
-                                                imageUrl: sorteo.imagenUrl!,
-                                                fit: BoxFit.cover,
-                                              )
-                                            else
-                                              Image.asset(
-                                                'assets/imagenes/logo_completo.png',
-                                                fit: BoxFit.contain,
-                                              ),
-                                            // Gradiente y Titulo
-                                            Positioned(
-                                              bottom: 0,
-                                              left: 0,
-                                              right: 0,
-                                              child: Container(
-                                                padding: const EdgeInsets.all(
-                                                  16,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  gradient: LinearGradient(
-                                                    begin:
-                                                        Alignment.bottomCenter,
-                                                    end: Alignment.topCenter,
-                                                    colors: [
-                                                      Colors.black.withValues(
-                                                        alpha: 0.8,
-                                                      ),
-                                                      Colors.transparent,
-                                                    ],
+                                        width: thumbWidth,
+                                        height: thumbHeight,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          border: Border.all(
+                                            color: selected
+                                                ? kPrimaryColor
+                                                : Colors.white.withValues(
+                                                    alpha: 0.3,
                                                   ),
-                                                ),
-                                                child: Text(
-                                                  sorteo.titulo,
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 18,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                  maxLines: 2,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
+                                            width: selected ? 2 : 1,
+                                          ),
+                                          image: DecorationImage(
+                                            image: CachedNetworkImageProvider(
+                                              bannerImages[index],
                                             ),
-                                          ],
+                                            fit: BoxFit.cover,
+                                            colorFilter: selected
+                                                ? null
+                                                : ColorFilter.mode(
+                                                    Colors.black.withValues(
+                                                      alpha: 0.3,
+                                                    ),
+                                                    BlendMode.darken,
+                                                  ),
+                                          ),
                                         ),
                                       ),
                                     ),
                                   );
-                                },
-                              );
-                            }).toList(),
-                          ),
-                        );
-                      }
-                      // Fallback: Logo Estático
-                      return Container(
-                        width: 380,
-                        height: 320,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 20,
-                              offset: const Offset(0, 10),
+                                }),
+                              ),
                             ),
-                          ],
+                          ),
                         ),
-                        padding: const EdgeInsets.all(20),
-                        child: Image.asset(
-                          'assets/imagenes/logo_completo.png',
-                          fit: BoxFit.contain,
-                        ),
-                      );
-                    },
-                  ),
-
-                  // Elemento Flotante 1: Boleto (Izquierda)
-                  Positioned(
-                    left: -20,
-                    bottom: 80,
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.15),
-                            blurRadius: 15,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
                       ),
-                      child: Column(
-                        children: [
-                          const Icon(
-                            Icons.local_activity,
-                            color: kPrimaryColor,
-                            size: 32,
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            "BOLETO",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
-                          ),
-                          Text(
-                            "#12345",
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 14,
-                              color: kPrimaryColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // Elemento Flotante 2: Ganaste (Derecha, abajo)
-
-                  // Elemento Flotante 3: Copa (Derecha, arriba)
-                  Positioned(
-                    right: -10,
-                    top: -10,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: kPrimaryColor,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: kPrimaryColor.withValues(alpha: 0.4),
-                            blurRadius: 15,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                        border: Border.all(color: Colors.white, width: 4),
-                      ),
-                      child: const Icon(
-                        Icons.emoji_events,
-                        color: Colors.white,
-                        size: 36,
-                      ),
-                    ),
-                  ),
-                ],
-              );
-
-              if (isNarrow) {
-                return Column(
-                  children: [
-                    infoColumn,
-                    const SizedBox(height: 60),
-                    graphicComposition,
                   ],
-                );
-              }
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(child: infoColumn),
-                  const SizedBox(width: 40),
-                  // No Expanded para el gráfico para que mantenga su tamaño fijo relativo
-                  graphicComposition,
-                ],
+                ),
               );
             },
-          ),
-        ),
+          );
+        },
       ),
     );
   }
-
-  Widget _trustItem(IconData icon, String text, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          child: Icon(icon, color: Colors.white, size: 16),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          text,
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: Colors.blueGrey.shade600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  // =====================================================================
-  // BANNER 3-EN-1 (MUESTRA 3 SORTEOS A LA VEZ)
-  // =====================================================================
 
   // =====================================================================
   // SORTEOS ACTUALES
@@ -1070,14 +1032,14 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
           child: Column(
             children: [
               Text(
-                "SORTEOS ACTUALES",
+                "EVENTOS ACTUALES",
                 key: sorteosKey,
                 style: kTitleMain,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 10),
               const Text(
-                "Explora los sorteos disponibles y asegura tus boletos antes de que se agoten.",
+                "Explora los eventos disponibles y asegura tus boletos antes de que se agoten.",
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16, color: Colors.black54),
               ),
@@ -1094,17 +1056,15 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                   }
 
                   final sorteos = snapshot.data ?? [];
-                  final now = DateTime.now();
 
-                  // Filtrar sorteos activos (fecha futura o nula)
+                  // Filtrar sorteos activos
                   final activeSorteos = sorteos.where((s) {
-                    if (s.fechaSorteo == null) return true;
-                    return !s.fechaSorteo!.isBefore(now);
+                    return s.estado == 'active';
                   }).toList();
 
                   if (activeSorteos.isEmpty) {
                     return const Text(
-                      "AÚN NO HAY SORTEOS ACTIVOS.",
+                      "AÚN NO HAY EVENTOS ACTIVOS.",
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         color: Colors.black54,
@@ -1195,7 +1155,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
               const SizedBox(
                 width: 700,
                 child: Text(
-                  "Multisorteos es una plataforma moderna y transparente, diseñada para que participar en rifas sea una experiencia confiable, rápida y totalmente segura. Con tecnología de verificación en tiempo real, procesos claros y un enfoque en la experiencia del usuario, conectamos a miles de personas con oportunidades reales de ganar en cada dinámica.",
+                  "Multisorteos es una plataforma moderna y transparente, diseñada para que participar en eventos sea una experiencia confiable, rápida y totalmente segura. Con tecnología de verificación en tiempo real, procesos claros y un enfoque en la experiencia del usuario, conectamos a miles de personas con oportunidades reales de ganar en cada dinámica.",
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 18,
@@ -1242,7 +1202,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  "Historial de ganadores y sorteos completados.",
+                  "Historial de ganadores y eventos completados.",
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16, color: Colors.grey),
                 ),
@@ -1262,17 +1222,24 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                     }
 
                     final sorteos = snapshot.data ?? [];
-                    final now = DateTime.now();
 
-                    // Filtrar sorteos finalizados (fecha pasada)
+                    // Filtrar sorteos finalizados
+                    const finishedStates = {
+                      'finished',
+                      'finalizado',
+                      'closed',
+                      'archived',
+                      'completed',
+                      'completado',
+                    };
                     final finishedSorteos = sorteos.where((s) {
-                      if (s.fechaSorteo == null) return false;
-                      return s.fechaSorteo!.isBefore(now);
+                      final estado = s.estado.trim().toLowerCase();
+                      return finishedStates.contains(estado);
                     }).toList();
 
                     if (finishedSorteos.isEmpty) {
                       return const Text(
-                        "Aún no hay sorteos finalizados.",
+                        "Aún no hay eventos finalizados.",
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           color: Colors.black54,
@@ -1283,7 +1250,11 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                     // Ordenar sorteos por fecha_sorteo descendente (más recientes primero)
                     final sortedSorteos = List<Sorteo>.from(finishedSorteos)
                       ..sort((a, b) {
-                        return b.fechaSorteo!.compareTo(a.fechaSorteo!);
+                        final fechaA =
+                            a.fechaSorteo ?? DateTime.fromMillisecondsSinceEpoch(0);
+                        final fechaB =
+                            b.fechaSorteo ?? DateTime.fromMillisecondsSinceEpoch(0);
+                        return fechaB.compareTo(fechaA);
                       });
 
                     return Wrap(
@@ -1841,7 +1812,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                   runSpacing: 20,
                   children: [
                     _buildMetodoItem(
-                      "💵",
+                      "💰",
                       "Efectivo",
                       "Disponible mediante acuerdos directos según la dinámica.",
                     ),
@@ -1969,7 +1940,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                   "Estamos preparando la plataforma de pagos para que puedas adquirir tus boletos directamente desde la web.",
                 ),
                 _buildFAQ(
-                  "¿Los sorteos de Montao se gestionan aquí?",
+                  "¿Los eventos de Montao se gestionan aquí?",
                   "Sí, Multisorteos centraliza la información oficial de las dinámicas y sus procesos.",
                 ),
                 _buildFAQ(
@@ -2059,7 +2030,7 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                       ),
                       SizedBox(height: 10),
                       FooterText("Inicio"),
-                      FooterText("Sorteos actuales"),
+                      FooterText("Eventos actuales"),
                       FooterText("Verificador"),
                       FooterText("Métodos de pago"),
                     ],
@@ -2078,13 +2049,12 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                       SizedBox(height: 10),
                       FooterText("Compras Web: 849-628-5498"),
                       FooterText("Ventas WhatsApp: 849-539-5025"),
-                      FooterText("Adajet Travel: 809-819-1525"),
                     ],
                   ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
+                    children: [
+                      const Text(
                         "Síguenos",
                         style: TextStyle(
                           color: Colors.white,
@@ -2092,11 +2062,19 @@ class _MultisorteosPageState extends State<MultisorteosPage> {
                           fontSize: 18,
                         ),
                       ),
-                      SizedBox(height: 10),
-                      FooterText("@adajetravel"),
-                      FooterText("@santotejadard"),
-                      FooterText("@2025montao"),
-                      FooterText("@multisorteosrd"),
+                      const SizedBox(height: 10),
+                      instagramLink(
+                        "@santotejadard",
+                        "https://www.instagram.com/santotejadard/",
+                      ),
+                      instagramLink(
+                        "@montaoconsantotejadard",
+                        "https://www.instagram.com/montaoconsantotejadard/",
+                      ),
+                      instagramLink(
+                        "@multisorteosrd",
+                        "https://www.instagram.com/multisorteosrd/",
+                      ),
                     ],
                   ),
                 ],
@@ -2290,8 +2268,8 @@ class _SorteoCardState extends State<SorteoCard> {
                         const SizedBox(width: 6),
                         Text(
                           widget.sorteo.fechaSorteo != null
-                              ? 'Fecha del sorteo: ${DateFormat('dd/MM/yyyy').format(widget.sorteo.fechaSorteo!)}'
-                              : "Sorteo al completar el 100% de la venta",
+                              ? 'Fecha del evento: ${DateFormat('dd/MM/yyyy').format(widget.sorteo.fechaSorteo!)}'
+                              : "Evento al completar el 100% de la venta",
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
@@ -2662,8 +2640,6 @@ class _PremiumInfoCardState extends State<_PremiumInfoCard> {
               _whatsappBtn("Compras Web", "18496285498"),
               const SizedBox(height: 10),
               _whatsappBtn("Ventas WhatsApp", "18495395025"),
-              const SizedBox(height: 10),
-              _whatsappBtn("Adajet Travel", "18098191525"),
             ],
           ],
         ),

@@ -32,8 +32,11 @@ class Sorteo {
   final int totalTickets;
   final DateTime? fechaSorteo;
   final String? imagenUrl;
+  final List<String> imagenes;
+  final bool mostrarNumeros;
   final List<Premio> premios;
   final int soldTickets;
+  final String estado;
 
   final int promoBuy;
   final int promoGet;
@@ -46,14 +49,20 @@ class Sorteo {
     required this.totalTickets,
     this.fechaSorteo,
     this.imagenUrl,
+    this.imagenes = const [],
+    this.mostrarNumeros = true,
     this.premios = const [],
     this.soldTickets = 0,
+    this.estado = 'active',
     this.promoBuy = 0,
     this.promoGet = 0,
   });
 
   factory Sorteo.fromMap(Map<String, dynamic> map, {int soldTickets = 0}) {
     final premiosData = map['premios'] as List<dynamic>? ?? [];
+    final imagenesData = map['imagenes'] as List<dynamic>? ?? [];
+    final rawEstado = map['estado'];
+    final normalizedEstado = (rawEstado ?? '').toString().trim().toLowerCase();
     return Sorteo(
       id: map['id'] as String,
       titulo: (map['titulo'] ?? '').toString(),
@@ -64,10 +73,13 @@ class Sorteo {
           ? DateTime.tryParse(map['fecha_sorteo'])
           : null,
       imagenUrl: map['imagen_url'] as String?,
+      imagenes: imagenesData.map((e) => e.toString()).toList(),
+      mostrarNumeros: map['mostrar_numeros'] as bool? ?? true,
       premios: premiosData
           .map((p) => Premio.fromMap(p as Map<String, dynamic>))
           .toList(),
       soldTickets: soldTickets,
+      estado: normalizedEstado.isEmpty ? 'active' : normalizedEstado,
       promoBuy: map['promocion_cantidad_compra'] as int? ?? 0,
       promoGet: map['promocion_cantidad_regalo'] as int? ?? 0,
     );
@@ -89,8 +101,11 @@ class Sorteo {
       totalTickets: totalTickets,
       fechaSorteo: fechaSorteo,
       imagenUrl: imagenUrl,
+      imagenes: imagenes,
+      mostrarNumeros: mostrarNumeros,
       premios: premios,
       soldTickets: soldTickets ?? this.soldTickets,
+      estado: estado,
       promoBuy: promoBuy,
       promoGet: promoGet,
     );
